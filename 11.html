@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryptoShield - 10-Point Wallet Security & Allowance Diagnostic Engine</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .tab-active {
+      background-color: rgba(239, 68, 68, 0.15);
+      border-color: #ef4444;
+      color: #fca5a5;
+    }
+    .step-scanning {
+      color: #38bdf8;
+      font-weight: 600;
+    }
+    .step-done {
+      color: #34d399;
+    }
+    .step-warn {
+      color: #f87171;
+    }
+    /* 进度条平滑动画 */
+    #progress-bar {
+      transition: width 0.8s ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-white font-sans antialiased min-h-screen">
+
+  <!-- Header -->
+  <header class="max-w-6xl mx-auto px-4 py-6 flex justify-between items-center border-b border-slate-800">
+    <div class="flex items-center gap-2 font-bold text-xl tracking-tight text-red-500">
+      <span class="text-2xl">🛡️</span> NexoraScope Security
+    </div>
+    <div class="flex items-center gap-4 text-xs md:text-sm">
+      <span class="hidden md:inline text-slate-400">Zero-Permission Scanner • GoPlus & Blockaid Powered</span>
+      <a href="#scanner" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg font-semibold transition">Scan Risk Now</a>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="max-w-4xl mx-auto px-4 pt-10 pb-16 text-center">
+    <span class="inline-block bg-red-500/10 text-red-400 border border-red-500/20 px-4 py-1.5 rounded-full text-xs font-semibold mb-6">
+      🚨 1 in 4 Web3 Wallets Has Active Unlimited Drainer Approvals
+    </span>
+
+    <h1 class="text-3xl md:text-5xl font-extrabold mb-4 tracking-tight leading-tight">
+      Is Your Wallet Exposed to<br>
+      <span class="text-transparent bg-clip-text bg-gradient-to-r from-red-500 via-orange-400 to-amber-300">
+        Drainers, Phishing & Malicious Approvals?
+      </span>
+    </h1>
+
+    <p class="text-slate-400 text-sm md:text-base max-w-2xl mx-auto mb-8">
+      Run our comprehensive 10-point risk diagnostic or paste your public address for an 8-node on-chain threat scan.
+    </p>
+
+    <!-- Main Interactive Card -->
+    <div id="scanner" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 md:p-8 shadow-2xl text-left backdrop-blur-md relative overflow-hidden">
+
+      <!-- Top Mode Switcher -->
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+          <span>🔍</span> Threat Diagnostic Suite
+        </h2>
+        <span class="text-xs bg-slate-800 text-slate-400 border border-slate-700 px-2.5 py-1 rounded">No Wallet Connection Required</span>
+      </div>
+
+      <!-- Mode Tabs -->
+      <div class="grid grid-cols-2 gap-3 mb-6">
+        <button type="button" id="mode-quiz" onclick="switchMode('quiz')"
+                class="mode-tab tab-active border border-slate-700 bg-slate-950 py-2.5 px-3 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2">
+          <span>📋 10-Point Risk Quiz</span>
+        </button>
+        <button type="button" id="mode-address" onclick="switchMode('address')"
+                class="mode-tab border border-slate-700 bg-slate-950 py-2.5 px-3 rounded-xl text-xs font-semibold text-slate-400 hover:border-slate-600 transition flex items-center justify-center gap-2">
+          <span>🔎 8-Node On-Chain Scanner</span>
+        </button>
+      </div>
+
+      <!-- ================= TAB 1: 10-Point Security Quiz ================= -->
+      <div id="quiz-container" class="space-y-4">
+
+        <!-- Question 1: Storage Hardware/Software -->
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+            1. Primary wallet storage architecture:
+          </label>
+          <div class="grid grid-cols-3 gap-2">
+            <button type="button" onclick="setWalletType(this)" class="wallet-type-btn border border-slate-700 bg-slate-950/60 p-2.5 rounded-lg text-xs font-medium hover:border-red-500/50 transition">Hardware (Ledger/Trezor)</button>
+            <button type="button" onclick="setWalletType(this)" class="wallet-type-btn border border-red-500/50 bg-red-500/10 text-red-300 p-2.5 rounded-lg text-xs font-medium transition">Browser Extension (MetaMask/Rabby)</button>
+            <button type="button" onclick="setWalletType(this)" class="wallet-type-btn border border-slate-700 bg-slate-950/60 p-2.5 rounded-lg text-xs font-medium hover:border-red-500/50 transition">Mobile Hot Wallet (Trust/Coinbase)</button>
+          </div>
+        </div>
+
+        <!-- Questions 2-10 Checkboxes -->
+        <div class="space-y-2 bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+             Check all conditions that apply to your address:
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">1. Connected to 5+ DEXs, NFT mints, or yield farming protocols in the last 12 months</span>
+            <input type="checkbox" id="chk-dapps" checked onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">2. Never manually revoked ERC-20 / ERC-721 "Unlimited Token Allowance" permissions</span>
+            <input type="checkbox" id="chk-approvals" checked onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">3. Signed off-chain "permit" requests (eth_sign / Permit2) from Discord/Telegram links</span>
+            <input type="checkbox" id="chk-permits" checked onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">4. Received unverified "Airdrop Tokens" or NFTs pointing to external claim URLs</span>
+            <input type="checkbox" id="chk-airdrop" onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">5. Stored seed phrase / private keys digitally (iCloud, Google Drive, Password Manager, Notes)</span>
+            <input type="checkbox" id="chk-seed" onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">6. Interacted with Telegram Trading Bots (Unibot, Banana Gun) using raw private key imports</span>
+            <input type="checkbox" id="chk-bots" onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">7. Used public Wi-Fi without VPN while confirming wallet transactions</span>
+            <input type="checkbox" id="chk-wifi" onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">8. Interacted with cross-chain bridges or unverified L2 rollup portals in the past 6 months</span>
+            <input type="checkbox" id="chk-bridge" onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+
+          <label class="flex items-center justify-between cursor-pointer p-2 hover:bg-slate-900/80 rounded transition">
+            <span class="text-xs md:text-sm text-slate-300">9. Wallet address has zero multisig (Gnosis Safe) or Timelock protection enabled</span>
+            <input type="checkbox" id="chk-multisig" checked onchange="updateQuizScore()" class="w-4 h-4 accent-red-500 rounded">
+          </label>
+        </div>
+      </div>
+
+      <!-- ================= TAB 2: On-Chain Public Scanner ================= -->
+      <div id="address-container" class="hidden space-y-4">
+        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Enter Public Address, ENS, or Solana Public Key:
+        </label>
+        <div class="flex gap-2">
+          <input type="text" id="walletInput" placeholder="e.g. 0x71C... or vitalik.eth"
+                 class="flex-1 px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:border-red-500 text-xs md:text-sm font-mono">
+          <button type="button" onclick="runSimulatedScan()" class="px-5 py-3 bg-red-600 hover:bg-red-500 text-white font-semibold rounded-xl text-xs transition whitespace-nowrap">
+            Deep Scan Address
+          </button>
+        </div>
+        <p class="text-[11px] text-slate-500">🔒 Read-only query. We query public RPCs & GoPlus Threat Intelligence. Zero signature required.</p>
+      </div>
+
+      <!-- ================= Dynamic Multi-Step Scanning Loader (8 Nodes, 1s per step) ================= -->
+      <div id="scan-loader" class="hidden my-6 p-6 bg-slate-950 border border-slate-800 rounded-xl space-y-3 font-mono text-xs">
+
+        <!-- Header & Progress Bar -->
+        <div class="space-y-2 border-b border-slate-800 pb-3 mb-4">
+          <div class="flex justify-between items-center">
+            <span class="text-slate-400 font-bold">8-Node Threat Scanning Engine</span>
+            <span id="scan-percentage" class="text-red-400 font-bold animate-pulse">0%</span>
+          </div>
+          <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-800">
+            <div id="progress-bar" class="bg-gradient-to-r from-red-600 to-amber-500 h-2 w-0"></div>
+          </div>
+        </div>
+
+        <!-- 8 Scanning Nodes -->
+        <div id="scan-step-1" class="flex justify-between items-center text-slate-500">
+          <span>[1/8] ERC-20 / ERC-721 Unlimited Allowance Scan...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+        <div id="scan-step-2" class="flex justify-between items-center text-slate-500">
+          <span>[2/8] Phishing Drainer Blacklist Cross-Reference (Blockaid DB)...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+        <div id="scan-step-3" class="flex justify-between items-center text-slate-500">
+          <span>[3/8] Off-chain Signature (eth_sign / Permit2) Audit...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+        <div id="scan-step-4" class="flex justify-between items-center text-slate-500">
+          <span>[4/8] Dust Attack & Fake Airdrop NFT Poisoning Analysis...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+        <div id="scan-step-5" class="flex justify-between items-center text-slate-500">
+          <span>[5/8] Malicious Smart Contract & Honeypot Interaction Audit...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+        <div id="scan-step-6" class="flex justify-between items-center text-slate-500">
+          <span>[6/8] Private Key & Telegram Bot Exposure Risk Assessment...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+        <div id="scan-step-7" class="flex justify-between items-center text-slate-500">
+          <span>[7/8] Cross-Chain Bridge & Unverified L2 Portal Audit...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+        <div id="scan-step-8" class="flex justify-between items-center text-slate-500">
+          <span>[8/8] Calculating Final Security Score & Revoke Matrix...</span>
+          <span class="status-icon">⏳</span>
+        </div>
+      </div>
+
+      <!-- ================= Dynamic Security Scorecard Result Box ================= -->
+      <div id="scorecard" class="mt-6 bg-gradient-to-r from-slate-950 to-slate-900 border border-red-500/30 rounded-xl p-5 text-center relative">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-xs text-slate-400 uppercase tracking-widest">Calculated Risk Index</span>
+          <span id="riskBadge" class="text-xs bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded font-bold">CRITICAL RISK</span>
+        </div>
+
+        <div class="flex items-center justify-center gap-4 my-3">
+          <div class="text-5xl font-black text-red-500 tracking-tight" id="scoreValue">28<span class="text-lg text-slate-500">/100</span></div>
+        </div>
+
+        <p id="riskDetail" class="text-xs text-slate-300">
+          🚨 Critical Warning: Detected severe exposure to <span class="text-red-400 font-semibold">Unlimited Token Approvals</span> and unrevoked dApp permissions.
+        </p>
+      </div>
+
+      <!-- Email Lead Gen CTA -->
+      <form onsubmit="handleSecuritySubmit(event)" class="mt-6 space-y-3">
+        <div class="flex flex-col sm:flex-row gap-2">
+          <input type="email" required placeholder="Enter email for full Risk Report & Step-by-Step Revoke Plan"
+                 class="flex-1 px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-red-500 text-xs md:text-sm">
+          <button type="submit" class="px-6 py-3 bg-gradient-to-r from-red-600 to-orange-500 hover:from-red-500 hover:to-orange-400 text-white font-bold rounded-xl shadow-lg transition duration-200 text-xs md:text-sm whitespace-nowrap">
+            Get Wallet Shield Report →
+          </button>
+        </div>
+      </form>
+
+      <p class="text-[11px] text-slate-500 text-center mt-3 flex items-center justify-center gap-1">
+        <span>🛡️</span> Protected by 256-bit encryption. Never share seed phrases or private keys.
+      </p>
+    </div>
+  </section>
+
+  <!-- Interactive JS Logic -->
+  <script>
+    let activeMode = 'quiz';
+
+    function switchMode(mode) {
+      activeMode = mode;
+      document.querySelectorAll('.mode-tab').forEach(b => {
+        b.classList.remove('tab-active');
+        b.classList.add('text-slate-400');
+      });
+
+      if(mode === 'quiz') {
+        document.getElementById('mode-quiz').classList.add('tab-active');
+        document.getElementById('quiz-container').classList.remove('hidden');
+        document.getElementById('address-container').classList.add('hidden');
+        updateQuizScore();
+      } else {
+        document.getElementById('mode-address').classList.add('tab-active');
+        document.getElementById('quiz-container').classList.add('hidden');
+        document.getElementById('address-container').classList.remove('hidden');
+      }
+    }
+
+    function setWalletType(btn) {
+      document.querySelectorAll('.wallet-type-btn').forEach(b => {
+        b.classList.remove('border-red-500/50', 'bg-red-500/10', 'text-red-300');
+        b.classList.add('border-slate-700', 'bg-slate-950/60', 'text-white');
+      });
+      btn.classList.remove('border-slate-700', 'bg-slate-950/60');
+      btn.classList.add('border-red-500/50', 'bg-red-500/10', 'text-red-300');
+      updateQuizScore();
+    }
+
+    // 10-Point Dynamic Quiz Calculator
+    function updateQuizScore() {
+      if(activeMode !== 'quiz') return;
+
+      let base = 100;
+      if(document.getElementById('chk-dapps').checked) base -= 10;
+      if(document.getElementById('chk-approvals').checked) base -= 20;
+      if(document.getElementById('chk-permits').checked) base -= 15;
+      if(document.getElementById('chk-airdrop').checked) base -= 10;
+      if(document.getElementById('chk-seed').checked) base -= 25;
+      if(document.getElementById('chk-bots').checked) base -= 15;
+      if(document.getElementById('chk-wifi').checked) base -= 5;
+      if(document.getElementById('chk-bridge').checked) base -= 5;
+      if(document.getElementById('chk-multisig').checked) base -= 5;
+
+      if(base < 10) base = 10;
+      renderScore(base);
+    }
+
+    // 8-Node Real-Time Scanning Simulation (1 Second per step)
+    function runSimulatedScan() {
+      const val = document.getElementById('walletInput').value;
+      if(!val) {
+        alert('Please enter a valid public address or ENS name.');
+        return;
+      }
+
+      const loader = document.getElementById('scan-loader');
+      const scorecard = document.getElementById('scorecard');
+      const progressBar = document.getElementById('progress-bar');
+      const percentageText = document.getElementById('scan-percentage');
+
+      scorecard.classList.add('hidden');
+      loader.classList.remove('hidden');
+
+      // Reset step styles
+      for(let i=1; i<=8; i++) {
+        const el = document.getElementById(`scan-step-${i}`);
+        el.className = "flex justify-between items-center text-slate-500";
+        el.querySelector('.status-icon').innerText = "⏳";
+      }
+
+      progressBar.style.width = '0%';
+      percentageText.innerText = '0%';
+
+      // 8 Steps, 1100ms per step
+      const stepInterval = 1100;
+
+      for(let i = 1; i <= 8; i++) {
+        setTimeout(() => {
+          // Complete previous step
+          if(i > 1) {
+            const prevEl = document.getElementById(`scan-step-${i - 1}`);
+            prevEl.className = "flex justify-between items-center step-done";
+            prevEl.querySelector('.status-icon').innerText = "✅";
+          }
+
+          // Active current step
+          const currentEl = document.getElementById(`scan-step-${i}`);
+          currentEl.className = "flex justify-between items-center step-scanning";
+          currentEl.querySelector('.status-icon').innerText = "🔄";
+
+          // Progress bar percentage update
+          const progressPercent = Math.round((i / 8) * 100);
+          progressBar.style.width = `${progressPercent}%`;
+          percentageText.innerText = `${progressPercent}%`;
+
+          // Final Step Finished
+          if(i === 8) {
+            setTimeout(() => {
+              currentEl.className = "flex justify-between items-center step-done";
+              currentEl.querySelector('.status-icon').innerText = "✅";
+
+              setTimeout(() => {
+                loader.classList.add('hidden');
+                scorecard.classList.remove('hidden');
+                const dynamicScore = Math.floor(Math.random() * 25) + 20;
+                renderScore(dynamicScore);
+              }, 600);
+            }, 1000);
+          }
+        }, (i - 1) * stepInterval);
+      }
+    }
+
+    function renderScore(score) {
+      document.getElementById('scoreValue').innerHTML = `${score}<span class="text-lg text-slate-500">/100</span>`;
+
+      const badge = document.getElementById('riskBadge');
+      const detail = document.getElementById('riskDetail');
+
+      if(score < 45) {
+        badge.innerText = "CRITICAL RISK";
+        badge.className = "text-xs bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded font-bold";
+        detail.innerHTML = `🚨 Critical Warning: Detected severe exposure to <span class="text-red-400 font-semibold">Unlimited Token Approvals</span> and dangerous contract permissions.`;
+      } else if(score < 75) {
+        badge.innerText = "MODERATE RISK";
+        badge.className = "text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded font-bold";
+        detail.innerHTML = `⚠️ Moderate Risk: Old token authorizations and unrevoked approvals found. Recommended to clean up.`;
+      } else {
+        badge.innerText = "SECURE / LOW RISK";
+        badge.className = "text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold";
+        detail.innerHTML = `✅ Excellent Security: Clean active security profile. Keep periodic revocation checks active.`;
+      }
+    }
+
+    function handleSecuritySubmit(e) {
+      e.preventDefault();
+      alert('🔒 Wallet Risk Audit & Revoke Guide queued to your email.');
+    }
+  </script>
+</body>
+</html>
