@@ -63,4 +63,6 @@ function result(){ $("quizArea").classList.add("hidden");$("resultArea").classLi
 $("next").onclick=()=>{if(answers[step]===null)return;if(step<2){step++;render()}else result()};$("back").onclick=()=>{if(step){step--;render()}};$("restart").onclick=()=>{step=0;answers=[null,null,null];$("resultArea").classList.add("hidden");$("quizArea").classList.remove("hidden");render()};
 document.querySelectorAll(".task").forEach(c=>c.onchange=()=>{let n=[...document.querySelectorAll(".task")].filter(x=>x.checked).length;$("count").textContent=`${n} of 5`;$("meter").style.width=(n/5*100)+"%"});
 $("emailForm").onsubmit=e=>{e.preventDefault();$("emailMessage").textContent="Demo only: connect this form to your email platform and publish your Privacy Policy before collecting subscriptions."};render();
-</script></body></html>
+</script><!-- Related guide: revoke Ethereum token approvals -->
+<p class="related-guide"><a href="/revoke-ethereum-token-approvals.html">Learn how to review and revoke Ethereum token approvals safely</a></p>
+</body></html>

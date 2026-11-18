@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How to Revoke Ethereum Token Approvals Safely | NexoraScope</title>
+  <meta name="description" content="Learn how to review and revoke Ethereum token approvals, understand gas fees and transaction risks, and avoid fake approval-revocation sites.">
+  <link rel="canonical" href="https://nexorascope.xyz/revoke-ethereum-token-approvals.html">
+  <meta name="robots" content="index,follow">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="How to Revoke Ethereum Token Approvals Safely">
+  <meta property="og:description" content="A practical, safety-first guide to reviewing and revoking Ethereum token allowances and NFT permissions.">
+  <meta property="og:url" content="https://nexorascope.xyz/revoke-ethereum-token-approvals.html">
+  <meta name="twitter:card" content="summary">
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@type":"Article",
+    "headline":"How to Revoke Ethereum Token Approvals Safely",
+    "description":"A practical guide to reviewing and revoking Ethereum token allowances and NFT permissions.",
+    "mainEntityOfPage":{"@type":"WebPage","@id":"https://nexorascope.xyz/revoke-ethereum-token-approvals.html"},
+    "publisher":{"@type":"Organization","name":"NexoraScope","url":"https://nexorascope.xyz/"},
+    "inLanguage":"en"
+  }
+  </script>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">NEXORA SCOPE</a>
+      <nav aria-label="Main navigation">
+        <a href="/">Home</a>
+        <a href="/wallet-security.html">Wallet Guide</a>
+        <a href="/token-approval.html">Token Approvals</a>
+        <a href="/crypto-scams.html">Scam Prevention</a>
+      </nav>
+    </div>
+  </header>
+  <main class="container article-content">
+    <p class="eyebrow">ETHEREUM SECURITY · PRACTICAL GUIDE</p>
+    <h1>How to Revoke Ethereum Token Approvals Safely</h1>
+    <p class="lead">A token approval can let a smart contract spend tokens on your behalf. If you no longer trust or use a spender, reviewing and revoking its permission may reduce an avoidable risk.</p>
+    <p><strong>Important:</strong> NexoraScope is an educational resource. This guide does not connect to wallets, inspect addresses, submit transactions, or revoke permissions for you.</p>
+
+    <h2>1. Understand what you are revoking</h2>
+    <p>For ERC-20 tokens, <code>approve</code> sets an allowance for a spender, and <code>allowance</code> reports the remaining amount that spender may use. An approval is separate from a wallet's connection to a website. Disconnecting a dApp does not itself erase an on-chain allowance.</p>
+    <p>NFT permissions are different: ERC-721 and ERC-1155 can use operator approvals that may cover multiple tokens in a collection. Read the permission type and scope before changing it.</p>
+
+    <h2>2. Find the approval using a trusted route</h2>
+    <ol>
+      <li>Start from the official website or documentation of your wallet, token project, or blockchain explorer. Type the known domain yourself or use a saved bookmark.</li>
+      <li>For Ethereum mainnet, Etherscan provides a Token Approval Checker. Confirm the domain is <code>etherscan.io</code> before connecting a wallet.</li>
+      <li>Review the network, token contract, spender address, permission type, and allowance amount. Do not rely on a token logo or display name alone.</li>
+      <li>If you do not recognize a spender, verify it against the official dApp documentation and contract address before taking action.</li>
+    </ol>
+
+    <h2>3. Decide whether to reduce or revoke access</h2>
+    <p>If you still use a legitimate application, consider whether a smaller allowance is sufficient and supported by your wallet or the token interface. If you no longer need the permission, you may choose to set the allowance to zero or revoke the relevant operator approval using a trusted interface.</p>
+    <p>Do not revoke permissions blindly. Some applications may require an allowance to perform a pending swap, deposit, withdrawal, or other action. Understand the impact on your position before confirming.</p>
+
+    <h2>4. Check the transaction before signing</h2>
+    <ul>
+      <li>Confirm the wallet is on the intended network.</li>
+      <li>Check the token and spender addresses, not just their names.</li>
+      <li>Read the wallet's transaction details. A revocation should change the relevant permission; it should not ask for your recovery phrase or private key.</li>
+      <li>Expect an on-chain transaction fee. The fee is paid in the network's gas token and can vary with network conditions.</li>
+      <li>Never sign an unrelated message or transaction just because a site labels it as a security check.</li>
+    </ul>
+
+    <h2>5. Verify the result on-chain</h2>
+    <p>After the transaction is confirmed, revisit the same trusted approval interface or inspect the transaction on the relevant block explorer. Confirm that the intended allowance is zero or that the operator permission is no longer active. A pending or failed transaction has not completed the change.</p>
+
+    <h2>Common mistakes to avoid</h2>
+    <ul>
+      <li><strong>Assuming disconnect means revoke:</strong> website connection permissions and token allowances are separate.</li>
+      <li><strong>Using an ad or unsolicited link:</strong> fake revocation pages can imitate wallet tools and ask for dangerous signatures.</li>
+      <li><strong>Ignoring the spender address:</strong> names and logos can be copied; verify contract addresses through official sources.</li>
+      <li><strong>Thinking revocation reverses theft:</strong> revoking a permission does not recover tokens already transferred.</li>
+      <li><strong>Assuming all networks are Ethereum mainnet:</strong> approvals are network-specific. Check the chain before reviewing or signing.</li>
+    </ul>
+
+    <h2>Frequently asked questions</h2>
+    <h3>Does revoking an approval cost gas?</h3>
+    <p>Usually, yes. Changing an on-chain allowance or operator permission requires a transaction, and the network charges a fee.</p>
+    <h3>Does revoking an approval recover stolen crypto?</h3>
+    <p>No. Revocation can limit future use of that permission after the change is confirmed. It cannot reverse completed transfers or guarantee recovery.</p>
+    <h3>Should I revoke every approval?</h3>
+    <p>Not automatically. Review each spender and the application that depends on it. Revoke permissions you no longer need or cannot verify, while considering pending activity and possible service disruption.</p>
+    <h3>Can NexoraScope scan or revoke my approvals?</h3>
+    <p>No. NexoraScope currently provides educational information only and does not connect to wallets or execute blockchain transactions.</p>
+
+    <h2>Official references</h2>
+    <ul>
+      <li><a href="https://ethereum.org/guides/how-to-revoke-token-access/" rel="noopener noreferrer">Ethereum.org: How to revoke smart contract access</a></li>
+      <li><a href="https://eips.ethereum.org/EIPS/eip-20" rel="noopener noreferrer">EIP-20: ERC-20 Token Standard</a></li>
+      <li><a href="https://kb.etherscan.com/tokenapprovals/" rel="noopener noreferrer">Etherscan: Token Approvals</a></li>
+      <li><a href="https://support.opensea.io/en/articles/8867133-how-can-i-revoke-token-approvals-and-permissions-on-ethereum" rel="noopener noreferrer">OpenSea Help: Revoke token approvals and permissions</a></li>
+    </ul>
+    <p class="notice">Security information can change as wallets, interfaces, and smart contracts evolve. Verify current instructions with the official provider before signing any transaction.</p>
+    <p>Related reading: <a href="/token-approval.html">Understanding Ethereum token approvals</a> · <a href="/wallet-security.html">Crypto wallet security guide</a> · <a href="/crypto-scams.html">Crypto scam prevention</a></p>
+  </main>
+  <footer class="site-footer">
+    <div class="container">
+      <a href="/about.html">About</a> · <a href="/privacy.html">Privacy</a> · <a href="/contact.html">Contact</a> · <a href="/">NexoraScope</a>
+      <p>NexoraScope provides general educational information only. This page is not a wallet security audit or financial, legal, or tax advice.</p>
+    </div>
+  </footer>
+</body>
+</html>
