@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallet & Smart Contract Security Scanner | NexoraScope</title>
+<meta name="description" content="Check Ethereum, BNB Chain and Base wallet addresses and token contracts for known security signals with NexoraScope.">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<link rel="canonical" href="https://nexorascope.xyz/scanner.html">
+<meta property="og:type" content="website"><meta property="og:site_name" content="NexoraScope"><meta property="og:title" content="Wallet & Smart Contract Security Scanner | NexoraScope"><meta property="og:description" content="Read-only wallet address and smart contract risk checks across Ethereum, BNB Chain and Base."><meta property="og:url" content="https://nexorascope.xyz/scanner.html">
+<link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/scanner.css">
+</head>
+<body>
+<header><div class="wrap nav"><a class="brand" href="index.html"><span class="brandMark">N</span>NEXORA<span>SCOPE</span></a><nav><a href="index.html">Home</a><a href="wallet-security.html">Wallet Guide</a><a href="token-approval.html">Token Approvals</a><a href="crypto-scams.html">Scam Prevention</a></nav><a class="btn" href="scanner.html">Security Scanner</a></div></header>
+<main>
+<div class="wrap breadcrumb"><a href="index.html">Home</a> / Security Scanner</div>
+<section class="scan-hero"><div class="wrap"><div class="eyebrow">NEXORASCOPE SECURITY TOOLS · BETA</div><h1>Look closer before you trust.</h1><p class="lead">Check a public wallet address or token contract for known security signals across Ethereum, BNB Chain and Base.</p><div class="scan-pills"><span>Read-only checks</span><span>No wallet connection</span><span>No private keys</span></div></div></section>
+<section class="scan-section"><div class="wrap">
+<div class="scan-tabs" role="tablist" aria-label="Scan type"><button class="scan-tab active" data-mode="wallet" role="tab" aria-selected="true">Wallet address</button><button class="scan-tab" data-mode="contract" role="tab" aria-selected="false">Token contract</button></div>
+<form id="scanForm" class="scan-form"><label for="chain">Network</label><select id="chain" name="chain"><option value="1">Ethereum</option><option value="56">BNB Chain</option><option value="8453">Base</option></select><label for="target" id="targetLabel">Wallet address</label><div class="address-row"><input id="target" name="target" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="0x..." required minlength="42" maxlength="42"><button class="btn" id="scanButton" type="submit">Scan address</button></div><p class="hint" id="inputHint">Enter a public 0x wallet address. Never enter a seed phrase or private key.</p></form>
+<div id="status" class="scan-status" aria-live="polite"></div>
+<section id="results" class="results" hidden aria-live="polite"></section>
+<div class="scan-disclaimer"><strong>Important limitations</strong><p>This beta checks third-party security intelligence and publicly available contract metadata. It is not a formal audit, does not guarantee safety, and may not detect every exploit or malicious behavior. Missing or unavailable data is not a clean bill of health. No wallet connection, transaction signing, approval revocation or asset recovery is performed.</p></div>
+</div></section>
+<section class="scan-section scan-how"><div class="wrap"><h2>What this scanner checks</h2><div class="scan-grid"><article><h3>Wallet address</h3><p>Known malicious-address signals and supported token/NFT approval risk data where the provider supports the selected chain.</p></article><article><h3>Token contract</h3><p>Token risk indicators such as source verification, proxy status, minting controls, blacklist controls, pausing, taxes and honeypot signals where available.</p></article><article><h3>Contract metadata</h3><p>Verified-source metadata from a configured Etherscan-compatible API key. This is metadata retrieval, not a complete code audit.</p></article></div><p class="hint">Learn how to interpret <a href="token-approval.html">token approvals</a> and <a href="revoke-ethereum-token-approvals.html">review or revoke permissions</a>.</p></div></section>
+</main>
+<footer><div class="wrap"><strong>NEXORASCOPE · SEE BEYOND THE NUMBERS</strong><p>General educational information only. Not personalized investment, legal or tax advice. Never share passwords, private keys or recovery phrases.</p><p><a href="about.html">About</a> · <a href="media.html">Media &amp; Partnerships</a> · <a href="privacy.html">Privacy</a> · <a href="contact.html">Contact</a> · <a href="index.html">Home</a></p><p>© 2026 NexoraScope.</p></div></footer>
+<script src="assets/scanner.js" defer></script>
+</body></html>
