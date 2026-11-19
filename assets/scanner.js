@@ -1,5 +1,5 @@
 (() => {
-  const API_URL = "https://nexorascope-security-api.liuyinfang666.workers.dev/api/scan";
+  const API_URL = "https://nexorascope-security-api-preview.liuyinfang666.workers.dev/api/scan";
   const form = document.getElementById("scanForm");
   const addressInput = document.getElementById("address");
   const chainInput = document.getElementById("chainId");
