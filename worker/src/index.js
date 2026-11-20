@@ -867,6 +867,35 @@ function decodeErc20Text(hex) {
   }
 }
 
+async function bscAdvancedCall(env, method, params) {
+  const endpoint = String(env.BSC_RPC_URL || "").trim();
+  if (!endpoint || !endpoint.includes("/multichain/")) {
+    throw Object.assign(new Error("BSC_RPC_URL must be the Ankr Advanced API HTTPS endpoint"), { status: "unavailable" });
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(20000)
+  });
+  let payload;
+  try { payload = await response.json(); }
+  catch { throw Object.assign(new Error("Ankr returned invalid JSON"), { status: "unavailable", httpStatus: response.status }); }
+  if (!response.ok || payload?.error) {
+    const message = payload?.error?.message || `Ankr HTTP ${response.status}`;
+    throw Object.assign(new Error(message), { status: classifyFailure(response.status, message), httpStatus: response.status });
+  }
+  return payload?.result;
+}
+
+async function bscEthCall(env, to, data) {
+  const result = await bscAdvancedCall(env, "eth_call", [{ to, data }, "latest"]);
+  if (typeof result !== "string" || !/^0x[0-9a-f]*$/i.test(result)) {
+    throw new Error("Ankr returned an invalid eth_call result");
+  }
+  return result;
+}
+
 async function readErc20Metadata(token, chainId, env) {
   const key = `${chainId}:${token.toLowerCase()}`;
   const cached = TOKEN_METADATA_CACHE.get(key);
@@ -885,8 +914,12 @@ async function readErc20Metadata(token, chainId, env) {
   for (const [field, selector] of [["name", "0x06fdde03"], ["symbol", "0x95d89b41"]]) {
     const params = new URLSearchParams({ ...base, data: selector });
     try {
-      const response = await fetchEtherscanJson(`${ETHERSCAN_API}?${params.toString()}`);
-      result[field] = decodeErc20Text(response.result);
+      if (String(chainId) === "56") {
+        result[field] = decodeErc20Text(await bscEthCall(env, token, selector));
+      } else {
+        const response = await fetchEtherscanJson(`${ETHERSCAN_API}?${params.toString()}`);
+        result[field] = decodeErc20Text(response.result);
+      }
     } catch (_) {
       result[field] = null;
     }
@@ -909,11 +942,11 @@ function spenderIdentity(address) {
 }
 
 async function readErc20Allowance(token, owner, spender, chainId, env) {
-  if (!env.ETHERSCAN_API_KEY) {
+  if (String(chainId) === "56" ? !env.BSC_RPC_URL : !env.ETHERSCAN_API_KEY) {
     return {
       status: "unavailable",
-      failureType: "missing_api_key",
-      message: "ETHERSCAN_API_KEY is not configured"
+      failureType: String(chainId) === "56" ? "missing_bsc_rpc" : "missing_api_key",
+      message: String(chainId) === "56" ? "BSC_RPC_URL is not configured" : "ETHERSCAN_API_KEY is not configured"
     };
   }
 
@@ -950,9 +983,9 @@ async function readErc20Allowance(token, owner, spender, chainId, env) {
     let allowanceResult;
 
     try {
-      allowanceResult = await fetchEtherscanJson(
-        `${ETHERSCAN_API}?${allowanceParams.toString()}`
-      );
+      allowanceResult = String(chainId) === "56"
+        ? { result: await bscEthCall(env, token, "0xdd62ed3e" + padAddress(owner) + padAddress(spender)) }
+        : await fetchEtherscanJson(`${ETHERSCAN_API}?${allowanceParams.toString()}`);
     } catch (error) {
       return {
         status: error.status || "error",
@@ -1010,9 +1043,9 @@ async function readErc20Allowance(token, owner, spender, chainId, env) {
       });
 
       try {
-        const decimalsResult = await fetchEtherscanJson(
-          `${ETHERSCAN_API}?${decimalsParams.toString()}`
-        );
+        const decimalsResult = String(chainId) === "56"
+          ? { result: await bscEthCall(env, token, "0x313ce567") }
+          : await fetchEtherscanJson(`${ETHERSCAN_API}?${decimalsParams.toString()}`);
 
         if (/^0x[0-9a-f]+$/i.test(decimalsResult.result || "")) {
           const parsed = Number(BigInt(decimalsResult.result));
@@ -1092,6 +1125,48 @@ function blockNumberToBigInt(value) {
 }
 
 async function discoverErc20Approvals(owner, chainId, env) {
+  if (String(chainId) === "56") {
+    try {
+      const ownerTopic = "0x" + owner.slice(2).toLowerCase().padStart(64, "0");
+      const result = await bscAdvancedCall(env, "ankr_getLogs", [{
+        blockchain: ["bsc"],
+        fromBlock: "earliest",
+        toBlock: "latest",
+        topics: [[APPROVAL_TOPIC], [ownerTopic]],
+        pageSize: 1000,
+        descOrder: true
+      }]);
+      const logs = Array.isArray(result?.logs) ? result.logs : [];
+      const candidates = new Map();
+      for (const log of logs) {
+        const topics = log?.topics || [];
+        if (topics.length < 3 || !ADDRESS_RE.test(log.address || "")) continue;
+        const spender = "0x" + String(topics[2]).slice(-40);
+        if (!ADDRESS_RE.test(spender)) continue;
+        const key = `${log.address.toLowerCase()}:${spender.toLowerCase()}`;
+        const previous = candidates.get(key);
+        if (!previous || blockNumberToBigInt(log.blockNumber) > blockNumberToBigInt(previous.lastSeenBlock)) {
+          candidates.set(key, { tokenAddress: log.address, spender, lastSeenBlock: log.blockNumber || "0x0", lastTransactionHash: log.transactionHash || null });
+        }
+      }
+      const all = [...candidates.values()].sort((a,b) => blockNumberToBigInt(a.lastSeenBlock) > blockNumberToBigInt(b.lastSeenBlock) ? -1 : 1);
+      const selected = all.slice(0,150);
+      return {
+        status: "success",
+        message: result?.nextPageToken ? "Ankr returned the first Approval log page; more pages remain." : "Ankr Approval log query completed.",
+        candidates: selected,
+        candidateCount: all.length,
+        logCount: logs.length,
+        logLimitReached: !!result?.nextPageToken,
+        candidateLimitReached: all.length > 150,
+        incomplete: !!result?.nextPageToken || all.length > 150,
+        latestBlock: null,
+        pageToken: result?.nextPageToken || null
+      };
+    } catch (error) {
+      return { status: error.status || "error", message: String(error.message || "Ankr Approval log query failed").slice(0,300), candidates: [], candidateCount: 0, logCount: 0, logLimitReached: false, candidateLimitReached: false, incomplete: true };
+    }
+  }
   if (!env.ETHERSCAN_API_KEY) {
     return {
       status: "unavailable",
@@ -1532,7 +1607,7 @@ async function handleScan(request, env) {
     const discovery = await discoverErc20Approvals(address, chainId, env);
 
     providers.erc20_onchain_discovery = {
-      provider: "Etherscan API V2",
+      provider: chainId === "56" ? "Ankr Advanced API" : "Etherscan API V2",
       status: discovery.status === "success" ? "pending" : discovery.status,
       message: discovery.message,
       candidateCount: discovery.candidateCount,
@@ -1556,7 +1631,8 @@ async function handleScan(request, env) {
         logLimitReached: discovery.logLimitReached,
         candidateLimitReached: discovery.candidateLimitReached,
         latestBlock: discovery.latestBlock,
-        batchSize: 3
+        batchSize: 3,
+        pageToken: discovery.pageToken || null
       };
     } else {
       addFinding(
@@ -1790,13 +1866,15 @@ export default {
         json({
           status: "ok",
           service: "nexorascope-security-api",
-          apiVersion: 5,
+          apiVersion: 6,
           features: {
             batchedErc20AllowanceChecks: true,
             allowanceBatchSize: 3,
             separateBatchInvocations: true,
             erc20TokenMetadata: true,
-            knownSpenderLabels: true
+            knownSpenderLabels: true,
+            bscAnkrAdvancedLogs: true,
+            bscRpcAllowanceReads: true
           },
           supportedChains: Object.keys(CHAINS)
         }),
