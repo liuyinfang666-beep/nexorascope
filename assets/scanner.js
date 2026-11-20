@@ -189,7 +189,7 @@
             .sort((a,b) => BigInt(a.lastSeenBlock || 0) > BigInt(b.lastSeenBlock || 0) ? -1 : 1)
             .slice(0,150);
           stats.candidateLimitReached = unique.size > 150;
-          if (pageToken) stats.logLimitReached = true;
+          stats.logLimitReached = !!pageToken;
         }
 
         while (cursor < session.candidates.length) {
@@ -241,6 +241,8 @@
 
         const provider = data.providers.erc20_onchain_discovery;
         provider.checkedCount = stats.checkedCount;
+        provider.logLimitReached = stats.logLimitReached;
+        provider.candidateLimitReached = stats.candidateLimitReached;
         provider.failedCount = stats.failedCount;
         provider.formattingIncompleteCount = stats.formattingIncompleteCount;
         provider.failureStats = stats.failureStats;
