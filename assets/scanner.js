@@ -157,6 +157,41 @@
         const combined = [];
         let cursor = 0;
 
+        if (chainInput.value === "56" && session.pageToken) {
+          const unique = new Map();
+          const addCandidates = rows => {
+            for (const candidate of rows || []) {
+              const key = `${String(candidate.tokenAddress || "").toLowerCase()}:${String(candidate.spender || "").toLowerCase()}`;
+              const previous = unique.get(key);
+              if (!previous || BigInt(candidate.lastSeenBlock || 0) > BigInt(previous.lastSeenBlock || 0)) unique.set(key, candidate);
+            }
+          };
+          addCandidates(session.candidates);
+          let pageToken = session.pageToken;
+          let pageNumber = 1;
+          while (pageToken) {
+            scanButton.textContent = `Loading BNB approval logs… page ${pageNumber}`;
+            const page = await postJson({
+              phase:"approval_log_batch",
+              chainId:chainInput.value,
+              address,
+              pageToken
+            });
+            addCandidates(page.candidates);
+            pageToken = page.pageToken || null;
+            pageNumber++;
+            if (pageNumber > 100) {
+              stats.logLimitReached = true;
+              break;
+            }
+          }
+          session.candidates = [...unique.values()]
+            .sort((a,b) => BigInt(a.lastSeenBlock || 0) > BigInt(b.lastSeenBlock || 0) ? -1 : 1)
+            .slice(0,150);
+          stats.candidateLimitReached = unique.size > 150;
+          if (pageToken) stats.logLimitReached = true;
+        }
+
         while (cursor < session.candidates.length) {
           scanButton.textContent =
             `Checking approvals… ${Math.min(cursor + session.batchSize, session.candidates.length)}/${session.candidates.length}`;
