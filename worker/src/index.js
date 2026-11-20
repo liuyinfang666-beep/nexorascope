@@ -1701,7 +1701,12 @@ export default {
         json({
           status: "ok",
           service: "nexorascope-security-api",
-          apiVersion: 3,
+          apiVersion: 4,
+          features: {
+            batchedErc20AllowanceChecks: true,
+            allowanceBatchSize: 3,
+            separateBatchInvocations: true
+          },
           supportedChains: Object.keys(CHAINS)
         }),
         request
