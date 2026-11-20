@@ -978,7 +978,8 @@ async function readErc20Allowance(token, owner, spender, chainId, env) {
       unlimited,
       active,
       checkedAt: new Date().toISOString(),
-      decimalsError
+      decimalsError,
+      formattingComplete: decimals !== null
     };
 
   } catch (error) {
@@ -1011,16 +1012,11 @@ async function discoverErc20Approvals(owner, chainId, env) {
     return {
       status: "unavailable",
       message: "ETHERSCAN_API_KEY is missing",
-      approvals: [],
+      candidates: [],
       candidateCount: 0,
-      checkedCount: 0,
-      failedCount: 0,
-      failureStats: { missing_api_key: 1 },
-      failureSamples: [{
-        type: "missing_api_key",
-        status: "unavailable",
-        message: "ETHERSCAN_API_KEY is missing"
-      }],
+      logCount: 0,
+      logLimitReached: false,
+      candidateLimitReached: false,
       incomplete: true
     };
   }
@@ -1030,7 +1026,6 @@ async function discoverErc20Approvals(owner, chainId, env) {
 
   try {
     const blockUrl = new URL(ETHERSCAN_API);
-
     blockUrl.search = new URLSearchParams({
       chainid: chainId,
       module: "proxy",
@@ -1039,7 +1034,6 @@ async function discoverErc20Approvals(owner, chainId, env) {
     });
 
     const blockData = await fetchEtherscanJson(blockUrl.toString());
-
     if (!/^0x[0-9a-f]+$/i.test(blockData.result || "")) {
       throw new Error(
         blockData.message || blockData.result || "Could not retrieve latest block"
@@ -1047,7 +1041,6 @@ async function discoverErc20Approvals(owner, chainId, env) {
     }
 
     const latestBlock = parseInt(blockData.result, 16);
-
     const PAGE_SIZE = 1000;
     const MAX_LOG_PAGES = 5;
     const logs = [];
@@ -1055,7 +1048,6 @@ async function discoverErc20Approvals(owner, chainId, env) {
 
     for (let page = 1; page <= MAX_LOG_PAGES; page++) {
       const logsUrl = new URL(ETHERSCAN_API);
-
       logsUrl.search = new URLSearchParams({
         chainid: chainId,
         module: "logs",
@@ -1071,35 +1063,24 @@ async function discoverErc20Approvals(owner, chainId, env) {
       });
 
       const logsData = await fetchEtherscanJson(logsUrl.toString(), 20000);
-
-      if (
-        String(logsData.status) === "0" &&
-        !Array.isArray(logsData.result)
-      ) {
+      if (String(logsData.status) === "0" && !Array.isArray(logsData.result)) {
         const message = String(logsData.result || logsData.message || "");
-
         if (/no records found/i.test(message)) break;
-
         throw new Error(message || "Approval log query failed");
       }
 
       const pageLogs = Array.isArray(logsData.result) ? logsData.result : [];
       logs.push(...pageLogs);
-
       if (pageLogs.length < PAGE_SIZE) break;
-
       if (page === MAX_LOG_PAGES) logLimitReached = true;
     }
 
     const candidates = new Map();
-
     for (const log of logs) {
       const topics = log?.topics || [];
-
       if (topics.length < 3 || !ADDRESS_RE.test(log.address || "")) continue;
 
       const spender = "0x" + topics[2].slice(-40);
-
       if (!ADDRESS_RE.test(spender)) continue;
 
       const tokenAddress = log.address.toLowerCase();
@@ -1116,11 +1097,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
         });
       } else {
         const previous = candidates.get(key);
-
-        if (
-          blockNumberToBigInt(blockNumber) >
-          blockNumberToBigInt(previous.lastSeenBlock)
-        ) {
+        if (blockNumberToBigInt(blockNumber) > blockNumberToBigInt(previous.lastSeenBlock)) {
           previous.lastSeenBlock = blockNumber;
           previous.lastTransactionHash = log.transactionHash || null;
         }
@@ -1128,172 +1105,160 @@ async function discoverErc20Approvals(owner, chainId, env) {
     }
 
     const allCandidates = [...candidates.values()];
-
     allCandidates.sort((a, b) => {
       const blockA = blockNumberToBigInt(a.lastSeenBlock);
       const blockB = blockNumberToBigInt(b.lastSeenBlock);
-
       if (blockA === blockB) return 0;
       return blockA > blockB ? -1 : 1;
     });
 
     const MAX_CANDIDATES = 150;
     const selected = allCandidates.slice(0, MAX_CANDIDATES);
+    const candidateLimitReached = allCandidates.length > MAX_CANDIDATES;
 
-    const candidateLimitReached =
-      allCandidates.length > MAX_CANDIDATES;
+    return {
+      status: "success",
+      message: "Approval logs discovered; current allowances will be checked in separate batches",
+      candidates: selected,
+      candidateCount: allCandidates.length,
+      logCount: logs.length,
+      logLimitReached,
+      candidateLimitReached,
+      incomplete: logLimitReached || candidateLimitReached,
+      latestBlock
+    };
+  } catch (error) {
+    return {
+      status: error.status || "error",
+      message: String(error.message || "On-chain approval discovery failed").slice(0, 300),
+      candidates: [],
+      candidateCount: 0,
+      logCount: 0,
+      logLimitReached: false,
+      candidateLimitReached: false,
+      incomplete: true
+    };
+  }
+}
 
-    const verified = [];
-    let checkedCount = 0;
-    let failedCount = 0;
-    let cursor = 0;
+async function handleAllowanceBatch(body, env) {
+  const chainId = String(body?.chainId || "");
+  const owner = String(body?.address || "").trim();
+  const candidates = body?.candidates;
+  const cursor = Number(body?.cursor);
 
-    // NEW: Aggregate allowance-check failure diagnostics.
-    const failureStats = {};
-    const failureSamples = [];
+  if (!CHAINS[chainId] || !ADDRESS_RE.test(owner)) {
+    return json({ error: "Invalid chain or wallet address for allowance batch." }, 400);
+  }
+  if (!Array.isArray(candidates) || candidates.length > 150) {
+    return json({ error: "Invalid candidate list." }, 400);
+  }
+  if (!Number.isInteger(cursor) || cursor < 0 || cursor > candidates.length) {
+    return json({ error: "Invalid allowance batch cursor." }, 400);
+  }
 
-    function recordFailure(result, candidate) {
-      const type =
-        result.failureType ||
-        result.status ||
-        "unknown";
+  const BATCH_SIZE = 3;
+  const slice = candidates.slice(cursor, cursor + BATCH_SIZE);
+  const approvals = [];
+  const failureStats = {};
+  const failureSamples = [];
+  let checkedCount = 0;
+  let failedCount = 0;
+  let formattingIncompleteCount = 0;
 
+  for (const candidate of slice) {
+    if (
+      !ADDRESS_RE.test(String(candidate?.tokenAddress || "")) ||
+      !ADDRESS_RE.test(String(candidate?.spender || ""))
+    ) {
+      failedCount++;
+      failureStats.invalid_candidate = (failureStats.invalid_candidate || 0) + 1;
+      if (failureSamples.length < 5) {
+        failureSamples.push({
+          type: "invalid_candidate",
+          message: "Candidate token or spender address is invalid"
+        });
+      }
+      continue;
+    }
+
+    let result;
+    try {
+      result = await readErc20Allowance(
+        candidate.tokenAddress,
+        owner,
+        candidate.spender,
+        chainId,
+        env
+      );
+    } catch (error) {
+      result = {
+        status: "error",
+        failureType: "unexpected_allowance_error",
+        message: error?.message || "Unexpected allowance error"
+      };
+    }
+
+    if (result.status !== "success") {
+      failedCount++;
+      const type = result.failureType || result.status || "unknown";
       failureStats[type] = (failureStats[type] || 0) + 1;
-
-      if (failureSamples.length < 12) {
+      if (failureSamples.length < 5) {
         failureSamples.push({
           type,
           status: result.status || "error",
           httpStatus: result.httpStatus ?? null,
-          message: String(result.message || "").slice(0, 250),
+          message: String(result.message || "").slice(0, 220),
           token: candidate.tokenAddress,
           spender: candidate.spender
         });
       }
+      continue;
     }
 
-    const CONCURRENCY = 2;
+    checkedCount++;
+    if (result.decimalsError) formattingIncompleteCount++;
+    if (!result.active) continue;
 
-    async function worker() {
-      while (cursor < selected.length) {
-        const index = cursor++;
-        const candidate = selected[index];
+    const raw = BigInt(result.rawAllowance);
+    const maxUint256 = (1n << 256n) - 1n;
+    const unlimited =
+      raw > 0n &&
+      raw * 100000000n >= maxUint256 * 99999999n;
 
-        let result;
-
-        try {
-          result = await readErc20Allowance(
-            candidate.tokenAddress,
-            owner,
-            candidate.spender,
-            chainId,
-            env
-          );
-        } catch (error) {
-          result = {
-            status: "error",
-            failureType: "unexpected_allowance_error",
-            message: error.message || "Unexpected allowance error"
-          };
-        }
-
-        checkedCount++;
-
-        if (result.status !== "success") {
-          failedCount++;
-          recordFailure(result, candidate);
-          continue;
-        }
-
-        if (!result.active) continue;
-
-        let unlimited = false;
-
-        try {
-          const raw = BigInt(result.rawAllowance);
-          const maxUint256 = (1n << 256n) - 1n;
-
-          unlimited =
-            raw > 0n &&
-            raw * 100000000n >= maxUint256 * 99999999n;
-        } catch (_) {
-          unlimited = false;
-        }
-
-        verified.push({
-          standard: "ERC-20",
-          tokenAddress: candidate.tokenAddress,
-          spender: candidate.spender,
-          allowance: result.allowance,
-          rawCurrentAllowance: result.rawAllowance,
-          tokenDecimals: result.decimals,
-          unlimited,
-          currentlyActive: true,
-          currentAllowanceStatus: "success",
-          currentAllowanceCheckedAt: result.checkedAt,
-          decimalsError: result.decimalsError || null,
-          discoverySource: "Etherscan Approval logs",
-          lastSeenBlock: candidate.lastSeenBlock,
-          lastTransactionHash: candidate.lastTransactionHash
-        });
-      }
-    }
-
-    await Promise.all(
-      Array.from(
-        { length: Math.min(CONCURRENCY, selected.length) },
-        () => worker()
-      )
-    );
-
-    const incomplete =
-      logLimitReached ||
-      candidateLimitReached ||
-      failedCount > 0;
-
-    return {
-      status: incomplete ? "partial" : "success",
-      message: incomplete
-        ? "Some candidates or historical logs could not be fully verified"
-        : "Approval event discovery and current allowance checks completed",
-      approvals: verified,
-      candidateCount: allCandidates.length,
-      checkedCount,
-      failedCount,
-      failureStats,
-      failureSamples,
-      logCount: logs.length,
-      logLimitReached,
-      candidateLimitReached,
-      incomplete,
-      latestBlock
-    };
-
-  } catch (error) {
-    const failureType =
-      error.failureType ||
-      error.status ||
-      "discovery_error";
-
-    return {
-      status: "error",
-      message: String(error.message || "On-chain approval discovery failed").slice(0, 300),
-      approvals: [],
-      candidateCount: 0,
-      checkedCount: 0,
-      failedCount: 0,
-      failureStats: {
-        [failureType]: 1
-      },
-      failureSamples: [{
-        type: failureType,
-        status: error.status || "error",
-        httpStatus: error.httpStatus ?? null,
-        message: String(error.message || "Unknown discovery error").slice(0, 250)
-      }],
-      incomplete: true
-    };
+    approvals.push({
+      standard: "ERC-20",
+      tokenAddress: candidate.tokenAddress,
+      spender: candidate.spender,
+      allowance: result.allowance,
+      rawCurrentAllowance: result.rawAllowance,
+      tokenDecimals: result.decimals,
+      unlimited,
+      currentlyActive: true,
+      currentAllowanceStatus: "success",
+      currentAllowanceCheckedAt: result.checkedAt,
+      decimalsError: result.decimalsError || null,
+      formattingComplete: result.decimals !== null,
+      discoverySource: "Etherscan Approval logs",
+      lastSeenBlock: candidate.lastSeenBlock,
+      lastTransactionHash: candidate.lastTransactionHash
+    });
   }
+
+  const nextCursor = cursor + slice.length;
+  return json({
+    status: "success",
+    approvals,
+    cursor,
+    nextCursor,
+    processedCount: slice.length,
+    checkedCount,
+    failedCount,
+    formattingIncompleteCount,
+    failureStats,
+    failureSamples,
+    done: nextCursor >= candidates.length
+  });
 }
 
 async function handleScan(request, env) {
@@ -1307,6 +1272,10 @@ async function handleScan(request, env) {
     body = await request.json();
   } catch {
     return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (body?.phase === "allowance_batch") {
+    return handleAllowanceBatch(body, env);
   }
 
   const mode = body?.mode;
@@ -1468,100 +1437,43 @@ async function handleScan(request, env) {
 
   await Promise.all(jobs);
 
+  let scanSession = null;
+
   if (mode === "wallet") {
     const discovery = await discoverErc20Approvals(address, chainId, env);
 
     providers.erc20_onchain_discovery = {
       provider: "Etherscan API V2",
-      status: discovery.status,
+      status: discovery.status === "success" ? "pending" : discovery.status,
       message: discovery.message,
       candidateCount: discovery.candidateCount,
-      checkedCount: discovery.checkedCount,
-      failedCount: discovery.failedCount || 0,
-      // NEW: Expose failure diagnostics in the scan response.
-      failureStats: discovery.failureStats || {},
-      failureSamples: discovery.failureSamples || [],
+      checkedCount: 0,
+      failedCount: 0,
+      formattingIncompleteCount: 0,
+      failureStats: {},
+      failureSamples: [],
       logCount: discovery.logCount ?? null,
       logLimitReached: discovery.logLimitReached ?? false,
       candidateLimitReached: discovery.candidateLimitReached ?? false,
-      incomplete: discovery.incomplete
+      incomplete: true
     };
 
-    if (
-      discovery.status === "success" ||
-      discovery.status === "partial"
-    ) {
+    if (discovery.status === "success") {
       sources.push("Etherscan on-chain ERC-20 approval discovery");
-    }
-
-    if (discovery.approvals.length > 0) {
-      for (let i = findings.length - 1; i >= 0; i--) {
-        if (findings[i].title === "ERC-20 approval data") {
-          findings.splice(i, 1);
-        }
-      }
-    }
-
-    const existing = new Set(
-      approvals.map(item =>
-        `${item.tokenAddress?.toLowerCase()}:${item.spender?.toLowerCase()}`
-      )
-    );
-
-    for (const record of discovery.approvals) {
-      const key =
-        `${record.tokenAddress.toLowerCase()}:${record.spender.toLowerCase()}`;
-
-      if (!existing.has(key)) {
-        approvals.push(record);
-        existing.add(key);
-      }
-    }
-
-    const unlimitedCount = discovery.approvals.filter(
-      item => item.unlimited === true
-    ).length;
-
-    const activeCount = discovery.approvals.length;
-
-    if (unlimitedCount > 0) {
+      scanSession = {
+        candidates: discovery.candidates,
+        candidateCount: discovery.candidateCount,
+        logCount: discovery.logCount,
+        logLimitReached: discovery.logLimitReached,
+        candidateLimitReached: discovery.candidateLimitReached,
+        latestBlock: discovery.latestBlock,
+        batchSize: 3
+      };
+    } else {
       addFinding(
         findings,
-        "Near-unlimited ERC-20 allowance",
-        `${unlimitedCount} current ERC-20 allowance(s) are at or extremely close to the uint256 maximum. Review and revoke permissions you do not need.`,
-        "bad",
-        25
-      );
-    }
-
-    if (activeCount > unlimitedCount) {
-      addFinding(
-        findings,
-        "Active ERC-20 allowance",
-        `${activeCount - unlimitedCount} additional active ERC-20 allowance(s) were found. Review each token and spender.`,
-        "warn",
-        12
-      );
-    }
-
-    if (discovery.incomplete) {
-      addFinding(
-        findings,
-        "ERC-20 approval discovery incomplete",
-        "Some historical logs or candidate allowances could not be fully checked. An incomplete scan must not be interpreted as absence of risk.",
-        "neutral",
-        0
-      );
-    }
-
-    if (
-      discovery.status === "success" &&
-      discovery.approvals.length === 0
-    ) {
-      addFinding(
-        findings,
-        "On-chain ERC-20 approval discovery",
-        "No active ERC-20 allowance was found among the discovered and successfully checked candidates. This does not cover NFT approvals or logs omitted by the provider.",
+        "ERC-20 approval discovery unavailable",
+        discovery.message || "Historical Approval logs could not be retrieved.",
         "neutral",
         0
       );
@@ -1612,6 +1524,7 @@ async function handleScan(request, env) {
     findings,
     approvals,
     providers,
+    scanSession,
     sources: [...new Set(sources)],
     disclaimer:
       "Automated indicators only; not an audit or guarantee. Missing provider data, incomplete historical logs, and failed allowance calls must not be interpreted as proof of safety or absence of approvals."
