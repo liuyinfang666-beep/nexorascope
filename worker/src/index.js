@@ -1300,6 +1300,48 @@ async function discoverErc20Approvals(owner, chainId, env) {
   }
 }
 
+async function handleApprovalLogBatch(body, env) {
+  const owner = String(body?.address || "").trim();
+  const pageToken = String(body?.pageToken || "");
+  if (!ADDRESS_RE.test(owner) || !pageToken || pageToken.length > 4096) {
+    return json({ error: "Invalid wallet address or Ankr page token." }, 400);
+  }
+  try {
+    const ownerTopic = "0x" + owner.slice(2).toLowerCase().padStart(64, "0");
+    const result = await bscAdvancedCall(env, "ankr_getLogs", [{
+      blockchain: ["bsc"],
+      fromBlock: "earliest",
+      toBlock: "latest",
+      topics: [[APPROVAL_TOPIC], [ownerTopic]],
+      pageSize: 1000,
+      pageToken,
+      descOrder: true
+    }]);
+    const logs = Array.isArray(result?.logs) ? result.logs : [];
+    const candidates = new Map();
+    for (const log of logs) {
+      const topics = log?.topics || [];
+      if (topics.length < 3 || !ADDRESS_RE.test(log.address || "")) continue;
+      const spender = "0x" + String(topics[2]).slice(-40);
+      if (!ADDRESS_RE.test(spender)) continue;
+      const key = `${log.address.toLowerCase()}:${spender.toLowerCase()}`;
+      const previous = candidates.get(key);
+      if (!previous || blockNumberToBigInt(log.blockNumber) > blockNumberToBigInt(previous.lastSeenBlock)) {
+        candidates.set(key, { tokenAddress: log.address, spender, lastSeenBlock: log.blockNumber || "0x0", lastTransactionHash: log.transactionHash || null });
+      }
+    }
+    return json({
+      status: "success",
+      candidates: [...candidates.values()],
+      logCount: logs.length,
+      pageToken: result?.nextPageToken || null,
+      done: !result?.nextPageToken
+    });
+  } catch (error) {
+    return json({ status: error.status || "error", error: String(error.message || "Ankr log pagination failed").slice(0,300) }, 502);
+  }
+}
+
 async function handleAllowanceBatch(body, env) {
   const chainId = String(body?.chainId || "");
   const owner = String(body?.address || "").trim();
@@ -1437,6 +1479,8 @@ async function handleScan(request, env) {
   } catch {
     return json({ error: "Invalid JSON body" }, 400);
   }
+
+  if (body?.phase === "approval_log_batch") return handleApprovalLogBatch(body, env);
 
   if (body?.phase === "allowance_batch") {
     return handleAllowanceBatch(body, env);
