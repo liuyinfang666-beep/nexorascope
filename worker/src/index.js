@@ -22,6 +22,26 @@ const ETHERSCAN_REQUEST_INTERVAL_MS = 400;
 
 const DECIMALS_CACHE = new Map();
 const DECIMALS_CACHE_TTL = 60 * 60 * 1000;
+const TOKEN_METADATA_CACHE = new Map();
+const TOKEN_METADATA_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+const KNOWN_SPENDERS = {
+  "0x7a250d5630b4cf539739df2c5dacb4c659f2488d": {
+    name: "Uniswap V2 Router02",
+    category: "DEX router",
+    identity: "known_protocol"
+  },
+  "0x000000000022d473030f116ddee9f6b43ac78ba3": {
+    name: "Uniswap Permit2",
+    category: "Token approval manager",
+    identity: "known_protocol"
+  },
+  "0xb300000b72deaeb607a12d5f54773d1c19c7028d": {
+    name: "Binance DEX Router",
+    category: "DEX router",
+    identity: "explorer_label"
+  }
+};
 
 const json = (data, status = 200) => new Response(
   JSON.stringify(data),
@@ -826,6 +846,73 @@ async function getEtherscanSource(address, chainId, env) {
   }
 }
 
+function decodeErc20Text(hex) {
+  if (!/^0x[0-9a-f]+$/i.test(hex || "")) return null;
+  const data = hex.slice(2);
+  if (data.length === 64) {
+    const bytes = data.match(/.{2}/g).map(x => parseInt(x, 16));
+    const text = new TextDecoder().decode(new Uint8Array(bytes)).replace(/\\0+$/g, "").trim();
+    return text || null;
+  }
+  if (data.length < 128) return null;
+  try {
+    const offset = Number(BigInt("0x" + data.slice(0, 64))) * 2;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset + 64 > data.length) return null;
+    const length = Number(BigInt("0x" + data.slice(offset, offset + 64)));
+    if (!Number.isSafeInteger(length) || length < 0 || length > 1024) return null;
+    const start = offset + 64;
+    const end = start + length * 2;
+    if (end > data.length) return null;
+    const bytes = data.slice(start, end).match(/.{2}/g).map(x => parseInt(x, 16));
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes))
+      .replace(/\\0/g, "").trim();
+    return text || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function readErc20Metadata(token, chainId, env) {
+  const key = `${chainId}:${token.toLowerCase()}`;
+  const cached = TOKEN_METADATA_CACHE.get(key);
+  if (cached && cached.expires > Date.now()) return cached.value;
+
+  const base = {
+    chainid: chainId,
+    module: "proxy",
+    action: "eth_call",
+    to: token,
+    tag: "latest",
+    apikey: env.ETHERSCAN_API_KEY
+  };
+  const result = { name: null, symbol: null, metadataStatus: "partial" };
+
+  for (const [field, selector] of [["name", "0x06fdde03"], ["symbol", "0x95d89b41"]]) {
+    const params = new URLSearchParams({ ...base, data: selector });
+    try {
+      const response = await fetchEtherscanJson(`${ETHERSCAN_API}?${params.toString()}`);
+      result[field] = decodeErc20Text(response.result);
+    } catch (_) {
+      result[field] = null;
+    }
+  }
+
+  result.metadataStatus = result.name || result.symbol ? "success" : "unavailable";
+  TOKEN_METADATA_CACHE.set(key, {
+    value: result,
+    expires: Date.now() + TOKEN_METADATA_CACHE_TTL
+  });
+  return result;
+}
+
+function spenderIdentity(address) {
+  const key = String(address || "").toLowerCase();
+  const known = KNOWN_SPENDERS[key];
+  return known
+    ? { spenderName: known.name, spenderCategory: known.category, spenderIdentity: known.identity }
+    : { spenderName: null, spenderCategory: "Unknown contract", spenderIdentity: "unknown" };
+}
+
 async function readErc20Allowance(token, owner, spender, chainId, env) {
   if (!env.ETHERSCAN_API_KEY) {
     return {
@@ -980,7 +1067,8 @@ async function readErc20Allowance(token, owner, spender, chainId, env) {
       active,
       checkedAt: new Date().toISOString(),
       decimalsError,
-      formattingComplete: decimals !== null
+      formattingComplete: decimals !== null,
+      metadata: await readErc20Metadata(token, chainId, env)
     };
 
   } catch (error) {
@@ -1227,10 +1315,15 @@ async function handleAllowanceBatch(body, env) {
       raw > 0n &&
       raw * 100000000n >= maxUint256 * 99999999n;
 
+    const tokenMetadata = result.metadata || { name: null, symbol: null, metadataStatus: "unavailable" };
     approvals.push({
       standard: "ERC-20",
       tokenAddress: candidate.tokenAddress,
+      tokenName: tokenMetadata.name || null,
+      tokenSymbol: tokenMetadata.symbol || null,
+      tokenMetadataStatus: tokenMetadata.metadataStatus || "unavailable",
       spender: candidate.spender,
+      ...spenderIdentity(candidate.spender),
       allowance: result.allowance,
       rawCurrentAllowance: result.rawAllowance,
       tokenDecimals: result.decimals,
@@ -1702,11 +1795,13 @@ export default {
         json({
           status: "ok",
           service: "nexorascope-security-api",
-          apiVersion: 4,
+          apiVersion: 5,
           features: {
             batchedErc20AllowanceChecks: true,
             allowanceBatchSize: 3,
-            separateBatchInvocations: true
+            separateBatchInvocations: true,
+            erc20TokenMetadata: true,
+            knownSpenderLabels: true
           },
           supportedChains: Object.keys(CHAINS)
         }),
