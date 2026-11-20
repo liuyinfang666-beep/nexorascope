@@ -1759,6 +1759,64 @@ export default {
       return withCors(new Response(null, { status: 204 }), request);
     }
 
+    if (url.pathname === "/api/ankr-diagnostics") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      try {
+        const wallet = "0x2a7fa743178b83fab841000d57144c7cb1ded359";
+        const ownerTopic = "0x" + wallet.slice(2).padStart(64, "0");
+        const result = await bscAdvancedCall(env, "ankr_getLogs", {
+          blockchain: ["bsc"],
+          fromBlock: "earliest",
+          toBlock: "latest",
+          topics: [[APPROVAL_TOPIC]],
+          pageSize: 10,
+          descOrder: true
+        });
+        const logs = Array.isArray(result?.logs) ? result.logs : null;
+        const ownerMatchCount = logs
+          ? logs.filter(log =>
+              String(log?.topics?.[1] || "").toLowerCase() === ownerTopic
+            ).length
+          : null;
+        return json({
+          status: "success",
+          provider: "Ankr Advanced API",
+          method: "ankr_getLogs",
+          query: {
+            blockchain: ["bsc"],
+            fromBlock: "earliest",
+            toBlock: "latest",
+            topic0: "ERC-20 Approval",
+            pageSize: 10,
+            descOrder: true
+          },
+          resultType: Array.isArray(result) ? "array" : typeof result,
+          resultKeys: result && typeof result === "object" && !Array.isArray(result)
+            ? Object.keys(result).slice(0, 20)
+            : [],
+          logsFieldType: Array.isArray(result?.logs) ? "array" : typeof result?.logs,
+          logCount: logs?.length ?? null,
+          ownerMatchCount,
+          hasNextPageToken: Boolean(result?.nextPageToken),
+          firstLogKeys: logs?.[0] && typeof logs[0] === "object"
+            ? Object.keys(logs[0]).slice(0, 20)
+            : [],
+          checkedAt: new Date().toISOString()
+        });
+      } catch (error) {
+        return json({
+          status: "error",
+          provider: "Ankr Advanced API",
+          failureType: error?.status || "error",
+          httpStatus: error?.httpStatus || null,
+          message: String(error?.message || "Ankr diagnostic failed").slice(0, 240),
+          checkedAt: new Date().toISOString()
+        }, 502);
+      }
+    }
+
     if (url.pathname === "/api/etherscan-test") {
       if (!env.ETHERSCAN_API_KEY) {
         return json({
