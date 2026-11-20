@@ -1133,7 +1133,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
         fromBlock: "earliest",
         toBlock: "latest",
         topics: [[APPROVAL_TOPIC], [ownerTopic]],
-        pageSize: "1000",
+        pageSize: 1000,
         descOrder: true
       });
       const logs = Array.isArray(result?.logs) ? result.logs : [];
@@ -1313,7 +1313,7 @@ async function handleApprovalLogBatch(body, env) {
       fromBlock: "earliest",
       toBlock: "latest",
       topics: [[APPROVAL_TOPIC], [ownerTopic]],
-      pageSize: "1000",
+      pageSize: 1000,
       pageToken,
       descOrder: true
     });
