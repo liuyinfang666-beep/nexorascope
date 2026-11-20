@@ -1132,7 +1132,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
         blockchain: ["bsc"],
         fromBlock: "earliest",
         toBlock: "latest",
-        topics: [[APPROVAL_TOPIC], [ownerTopic]],
+        topics: [[APPROVAL_TOPIC]],
         pageSize: 1000,
         descOrder: true
       });
@@ -1140,7 +1140,11 @@ async function discoverErc20Approvals(owner, chainId, env) {
       const candidates = new Map();
       for (const log of logs) {
         const topics = log?.topics || [];
-        if (topics.length < 3 || !ADDRESS_RE.test(log.address || "")) continue;
+        if (
+          topics.length < 3 ||
+          String(topics[1] || "").toLowerCase() !== ownerTopic.toLowerCase() ||
+          !ADDRESS_RE.test(log.address || "")
+        ) continue;
         const spender = "0x" + String(topics[2]).slice(-40);
         if (!ADDRESS_RE.test(spender)) continue;
         const key = `${log.address.toLowerCase()}:${spender.toLowerCase()}`;
@@ -1237,7 +1241,11 @@ async function discoverErc20Approvals(owner, chainId, env) {
     const candidates = new Map();
     for (const log of logs) {
       const topics = log?.topics || [];
-      if (topics.length < 3 || !ADDRESS_RE.test(log.address || "")) continue;
+      if (
+        topics.length < 3 ||
+        String(topics[1] || "").toLowerCase() !== ownerTopic.toLowerCase() ||
+        !ADDRESS_RE.test(log.address || "")
+      ) continue;
 
       const spender = "0x" + topics[2].slice(-40);
       if (!ADDRESS_RE.test(spender)) continue;
@@ -1312,7 +1320,7 @@ async function handleApprovalLogBatch(body, env) {
       blockchain: ["bsc"],
       fromBlock: "earliest",
       toBlock: "latest",
-      topics: [[APPROVAL_TOPIC], [ownerTopic]],
+      topics: [[APPROVAL_TOPIC]],
       pageSize: 1000,
       pageToken,
       descOrder: true
