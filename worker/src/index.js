@@ -1329,7 +1329,11 @@ async function handleApprovalLogBatch(body, env) {
     const candidates = new Map();
     for (const log of logs) {
       const topics = log?.topics || [];
-      if (topics.length < 3 || !ADDRESS_RE.test(log.address || "")) continue;
+      if (
+        topics.length < 3 ||
+        String(topics[1] || "").toLowerCase() !== ownerTopic ||
+        !ADDRESS_RE.test(log.address || "")
+      ) continue;
       const spender = "0x" + String(topics[2]).slice(-40);
       if (!ADDRESS_RE.test(spender)) continue;
       const key = `${log.address.toLowerCase()}:${spender.toLowerCase()}`;
