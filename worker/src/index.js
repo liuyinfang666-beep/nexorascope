@@ -1128,14 +1128,14 @@ async function discoverErc20Approvals(owner, chainId, env) {
   if (String(chainId) === "56") {
     try {
       const ownerTopic = "0x" + owner.slice(2).toLowerCase().padStart(64, "0");
-      const result = await bscAdvancedCall(env, "ankr_getLogs", [{
+      const result = await bscAdvancedCall(env, "ankr_getLogs", {
         blockchain: ["bsc"],
         fromBlock: "earliest",
         toBlock: "latest",
         topics: [[APPROVAL_TOPIC], [ownerTopic]],
-        pageSize: 1000,
+        pageSize: "1000",
         descOrder: true
-      }]);
+      });
       const logs = Array.isArray(result?.logs) ? result.logs : [];
       const candidates = new Map();
       for (const log of logs) {
@@ -1308,15 +1308,15 @@ async function handleApprovalLogBatch(body, env) {
   }
   try {
     const ownerTopic = "0x" + owner.slice(2).toLowerCase().padStart(64, "0");
-    const result = await bscAdvancedCall(env, "ankr_getLogs", [{
+    const result = await bscAdvancedCall(env, "ankr_getLogs", {
       blockchain: ["bsc"],
       fromBlock: "earliest",
       toBlock: "latest",
       topics: [[APPROVAL_TOPIC], [ownerTopic]],
-      pageSize: 1000,
+      pageSize: "1000",
       pageToken,
       descOrder: true
-    }]);
+    });
     const logs = Array.isArray(result?.logs) ? result.logs : [];
     const candidates = new Map();
     for (const log of logs) {
@@ -1445,7 +1445,7 @@ async function handleAllowanceBatch(body, env) {
       currentAllowanceCheckedAt: result.checkedAt,
       decimalsError: result.decimalsError || null,
       formattingComplete: result.decimals !== null,
-      discoverySource: "Etherscan Approval logs",
+      discoverySource: String(chainId) === "56" ? "Ankr Advanced API Approval logs" : "Etherscan Approval logs",
       lastSeenBlock: candidate.lastSeenBlock,
       lastTransactionHash: candidate.lastTransactionHash
     });
@@ -1667,7 +1667,7 @@ async function handleScan(request, env) {
     };
 
     if (discovery.status === "success") {
-      sources.push("Etherscan on-chain ERC-20 approval discovery");
+      sources.push(chainId === "56" ? "Ankr Advanced API on-chain ERC-20 approval discovery" : "Etherscan on-chain ERC-20 approval discovery");
       scanSession = {
         candidates: discovery.candidates,
         candidateCount: discovery.candidateCount,
