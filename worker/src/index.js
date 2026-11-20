@@ -36,11 +36,6 @@ const KNOWN_SPENDERS = {
     category: "Token approval manager",
     identity: "known_protocol"
   },
-  "0xb300000b72deaeb607a12d5f54773d1c19c7028d": {
-    name: "Binance DEX Router",
-    category: "DEX router",
-    identity: "explorer_label"
-  }
 };
 
 const json = (data, status = 200) => new Response(
