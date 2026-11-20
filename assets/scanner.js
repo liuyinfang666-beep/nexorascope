@@ -187,10 +187,22 @@
           cursor = batch.nextCursor;
         }
 
-        data.approvals = [
-          ...(Array.isArray(data.approvals) ? data.approvals : []),
-          ...combined
-        ];
+        const mergedApprovals = Array.isArray(data.approvals) ? [...data.approvals] : [];
+        const seenApprovalKeys = new Set(mergedApprovals.map(item =>
+          `${String(item.tokenAddress || "").toLowerCase()}:${String(item.spender || "").toLowerCase()}`
+        ));
+        for (const item of combined) {
+          const key = `${String(item.tokenAddress || "").toLowerCase()}:${String(item.spender || "").toLowerCase()}`;
+          if (!seenApprovalKeys.has(key)) {
+            mergedApprovals.push(item);
+            seenApprovalKeys.add(key);
+          }
+        }
+        data.approvals = mergedApprovals;
+
+        if (combined.length > 0) {
+          data.findings = (data.findings || []).filter(f => f.title !== "ERC-20 approval data");
+        }
 
         const provider = data.providers.erc20_onchain_discovery;
         provider.checkedCount = stats.checkedCount;
