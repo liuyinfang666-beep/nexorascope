@@ -1891,6 +1891,54 @@ export default {
           pageSize: 10,
           descOrder: true
         });
+
+        // Cross-check Ankr's topic filtering by fetching a bounded sample of
+        // global Approval logs, then matching the indexed owner locally.
+        const crossCheck = {
+          pageSize: 1000,
+          maxPages: 3,
+          pagesFetched: 0,
+          rawLogCount: 0,
+          matchingOwnerCount: 0,
+          nextPageTokenSeen: false,
+          sampleMatches: []
+        };
+        let crossCheckPageToken = null;
+        for (let page = 0; page < crossCheck.maxPages; page++) {
+          const params = {
+            blockchain: ["bsc"],
+            fromBlock: "earliest",
+            toBlock: "latest",
+            topics: [[APPROVAL_TOPIC]],
+            pageSize: crossCheck.pageSize,
+            descOrder: true
+          };
+          if (crossCheckPageToken) params.pageToken = crossCheckPageToken;
+          const result = await bscAdvancedCall(env, "ankr_getLogs", params);
+          crossCheck.pagesFetched += 1;
+          const pageLogs = Array.isArray(result?.logs) ? result.logs : [];
+          crossCheck.rawLogCount += pageLogs.length;
+          for (const log of pageLogs) {
+            const topics = Array.isArray(log?.topics) ? log.topics : [];
+            if (String(topics[0] || "").toLowerCase() === APPROVAL_TOPIC &&
+                String(topics[1] || "").toLowerCase() === ownerTopic) {
+              crossCheck.matchingOwnerCount += 1;
+              if (crossCheck.sampleMatches.length < 5) {
+                crossCheck.sampleMatches.push({
+                  tokenAddress: log?.address ?? null,
+                  spenderTopic: topics[2] ?? null,
+                  blockNumber: log?.blockNumber ?? null,
+                  transactionHash: log?.transactionHash ?? null
+                });
+              }
+            }
+          }
+          crossCheckPageToken = result?.nextPageToken || null;
+          if (crossCheckPageToken) crossCheck.nextPageTokenSeen = true;
+          if (!crossCheckPageToken) break;
+        }
+        crossCheck.stoppedAtPageLimit = Boolean(crossCheckPageToken);
+
         return json({
           status: "success",
           provider: "Ankr Advanced API",
@@ -1909,6 +1957,7 @@ export default {
           approvalAndSpender: summarize(approvalAndSpender, null, true),
           ownerOnly: summarize(ownerOnly, ownerTopic),
           approvalAndOwner: summarize(approvalAndOwner, ownerTopic),
+          globalApprovalLocalOwnerCrossCheck: crossCheck,
           checkedAt: new Date().toISOString()
         });
       } catch (error) {
