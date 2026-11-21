@@ -1696,7 +1696,9 @@ async function handleScan(request, env) {
 
     providers.erc20_onchain_discovery = {
       provider: chainId === "56" ? "Ankr Advanced API" : "Etherscan API V2",
-      status: discovery.status === "success" ? "pending" : discovery.status,
+      status: discovery.status === "success"
+        ? (discovery.candidateCount > 0 ? "pending" : "success")
+        : discovery.status,
       message: discovery.message,
       candidateCount: discovery.candidateCount,
       checkedCount: 0,
@@ -1707,7 +1709,7 @@ async function handleScan(request, env) {
       logCount: discovery.logCount ?? null,
       logLimitReached: discovery.logLimitReached ?? false,
       candidateLimitReached: discovery.candidateLimitReached ?? false,
-      incomplete: true
+      incomplete: discovery.incomplete === true
     };
 
     if (discovery.status === "success") {
