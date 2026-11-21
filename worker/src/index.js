@@ -1795,7 +1795,7 @@ export default {
     const url = new URL(request.url);
 
     if (
-      ["/api/scan", "/api/health"].includes(url.pathname) &&
+      ["/api/scan", "/api/health", "/api/ankr-diagnostics"].includes(url.pathname) &&
       request.method === "OPTIONS"
     ) {
       return withCors(new Response(null, { status: 204 }), request);
@@ -1894,7 +1894,7 @@ export default {
         crossCheck.inputPageTokenProvided = inputPageTokenProvided;
         crossCheck.nextPageToken = crossCheckPageToken;
 
-        return json({
+        return withCors(json({
           status: "success",
           provider: "Ankr Advanced API",
           method: "ankr_getLogs",
@@ -1909,16 +1909,16 @@ export default {
           },
           globalApprovalLocalOwnerCrossCheck: crossCheck,
           checkedAt: new Date().toISOString()
-        });
+        }), request);
       } catch (error) {
-        return json({
+        return withCors(json({
           status: "error",
           provider: "Ankr Advanced API",
           failureType: error?.status || "error",
           httpStatus: error?.httpStatus || null,
           message: String(error?.message || "Ankr diagnostic failed").slice(0, 240),
           checkedAt: new Date().toISOString()
-        }, 502);
+        }, 502), request);
       }
     }
 
