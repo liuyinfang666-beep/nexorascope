@@ -77,16 +77,31 @@
   }
 
   async function postJson(payload) {
-    const response = await fetch(API_URL, {
-      method:"POST",
-      headers:{"content-type":"application/json"},
-      body:JSON.stringify(payload)
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || `Scan request failed (HTTP ${response.status})`);
+    const maxRateLimitRetries = 3;
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(API_URL, {
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      let data;
+      try { data = await response.json(); }
+      catch { data = {}; }
+      const message = String(data.error || data.message || "");
+      const rateLimited =
+        response.status === 429 ||
+        response.status === 503 ||
+        /rate.?limit|too many requests|call rate limit exhausted/i.test(message);
+      if (rateLimited && attempt < maxRateLimitRetries) {
+        const waitMs = Math.min(10000 * (2 ** attempt), 40000);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
+      if (!response.ok) {
+        throw new Error(message || `Scan request failed (HTTP ${response.status})`);
+      }
+      return data;
     }
-    return data;
   }
 
   function addDiscoveryFindings(data, stats) {
