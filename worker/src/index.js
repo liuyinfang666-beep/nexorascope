@@ -1781,6 +1781,7 @@ export default {
           logsFieldType: Array.isArray(result?.logs) ? "array" : typeof result?.logs,
           logCount: logs?.length ?? null,
           hasNextPageToken: Boolean(result?.nextPageToken),
+          syncStatus: result?.syncStatus ?? null,
           firstLogKeys: first && typeof first === "object"
             ? Object.keys(first).slice(0, 20)
             : [],
