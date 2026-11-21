@@ -1132,7 +1132,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
         blockchain: ["bsc"],
         fromBlock: "earliest",
         toBlock: "latest",
-        topics: [[APPROVAL_TOPIC]],
+        topics: [[APPROVAL_TOPIC], [ownerTopic]],
         pageSize: 10000,
         descOrder: true
       });
@@ -1320,7 +1320,7 @@ async function handleApprovalLogBatch(body, env) {
       blockchain: ["bsc"],
       fromBlock: "earliest",
       toBlock: "latest",
-      topics: [[APPROVAL_TOPIC]],
+      topics: [[APPROVAL_TOPIC], [ownerTopic]],
       pageSize: 10000,
       pageToken,
       descOrder: true
@@ -1774,7 +1774,7 @@ export default {
           blockchain: ["bsc"],
           fromBlock: "earliest",
           toBlock: "latest",
-          topics: [[APPROVAL_TOPIC]],
+          topics: [[APPROVAL_TOPIC], [ownerTopic]],
           pageSize: 10,
           descOrder: true
         });
