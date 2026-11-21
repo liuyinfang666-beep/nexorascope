@@ -397,8 +397,7 @@ async function cachedProviderGet(
           error?.httpStatus || 0,
           error?.message || ""
         );
-        if (
-          attempt < MAX_RETRIES &&
+        if (          attempt < MAX_RETRIES &&
           failureStatus === "unavailable"
         ) {
           await new Promise(resolve =>
@@ -797,8 +796,7 @@ async function getEtherscanSource(address, chainId, env) {
     const data = result.data;
     const item = data?.result?.[0];
     if (String(data?.status) === "0" && !item?.SourceCode) {
-      const msg =
-        `${data?.message || "Explorer returned no source"} ` +
+      const msg =        `${data?.message || "Explorer returned no source"} ` +
         `${Array.isArray(data?.result) ? data.result[0] : ""}`.trim();
 
       return {
@@ -1197,8 +1195,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
         candidates: selected,
         candidateCount: all.length,        logCount: logs.length,
         rawLogCount,
-        pagesFetched,
-        nextPageTokenSeen,
+        pagesFetched,        nextPageTokenSeen,
         logLimitReached,
         candidateLimitReached,
         incomplete,
@@ -1597,8 +1594,7 @@ async function handleScan(request, env) {
         findings,        `${key} unavailable`,
         `${providers[key].status}: ${providers[key].message}`,
         "neutral",
-        0
-      );
+        0      );
     }
   };
 
@@ -1847,52 +1843,11 @@ export default {
         };
       };
       try {
-        const ownerOnly = await bscAdvancedCall(env, "ankr_getLogs", {
-          blockchain: ["bsc"],
-          fromBlock: "earliest",
-          toBlock: "latest",
-          topics: [[], [ownerTopic]],
-          pageSize: 10,
-          descOrder: true
-        });
-        const approvalOnly = await bscAdvancedCall(env, "ankr_getLogs", {
-          blockchain: ["bsc"],
-          fromBlock: "earliest",
-          toBlock: "latest",
-          topics: [[APPROVAL_TOPIC]],
-          pageSize: 10,
-          descOrder: true
-        });
-        const spenderOnly = await bscAdvancedCall(env, "ankr_getLogs", {
-          blockchain: ["bsc"],
-          fromBlock: "earliest",
-          toBlock: "latest",
-          topics: [[], [], [ownerTopic]],
-          pageSize: 10,
-          descOrder: true
-        });
-        const approvalAndSpender = await bscAdvancedCall(env, "ankr_getLogs", {
-          blockchain: ["bsc"],
-          fromBlock: "earliest",
-          toBlock: "latest",
-          topics: [[APPROVAL_TOPIC], [], [ownerTopic]],
-          pageSize: 10,
-          descOrder: true
-        });
-        const approvalAndOwner = await bscAdvancedCall(env, "ankr_getLogs", {
-          blockchain: ["bsc"],
-          fromBlock: "earliest",
-          toBlock: "latest",
-          topics: [[APPROVAL_TOPIC], [ownerTopic]],
-          pageSize: 10,
-          descOrder: true
-        });
-
         // Cross-check Ankr's topic filtering by fetching a bounded sample of
         // global Approval logs, then matching the indexed owner locally.
         const crossCheck = {
           pageSize: 1000,
-          maxPages: 5,
+          maxPages: 1,
           pagesFetched: 0,
           rawLogCount: 0,
           matchingOwnerCount: 0,
@@ -1952,11 +1907,6 @@ export default {
             approvalTopicConfigured: true,
             walletTopicLength: ownerTopic.length
           },
-          approvalOnly: summarize(approvalOnly, null),
-          spenderOnly: summarize(spenderOnly, null, true),
-          approvalAndSpender: summarize(approvalAndSpender, null, true),
-          ownerOnly: summarize(ownerOnly, ownerTopic),
-          approvalAndOwner: summarize(approvalAndOwner, ownerTopic),
           globalApprovalLocalOwnerCrossCheck: crossCheck,
           checkedAt: new Date().toISOString()
         });
@@ -1997,8 +1947,7 @@ export default {
       const data = await fetchEtherscanJson(apiUrl.toString());
 
       return json({
-        httpStatus: 200,        apiStatus: data.status,
-        apiMessage: data.message,
+        httpStatus: 200,        apiStatus: data.status,        apiMessage: data.message,
         resultCount: Array.isArray(data.result) ? data.result.length : null,
         result: Array.isArray(data.result) ? data.result.slice(0, 5) : data.result
       });
