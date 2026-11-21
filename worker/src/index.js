@@ -1819,6 +1819,14 @@ export default {
           pageSize: 10,
           descOrder: true
         });
+        const approvalAndSpender = await bscAdvancedCall(env, "ankr_getLogs", {
+          blockchain: ["bsc"],
+          fromBlock: "earliest",
+          toBlock: "latest",
+          topics: [[APPROVAL_TOPIC], [], [ownerTopic]],
+          pageSize: 10,
+          descOrder: true
+        });
         const approvalAndOwner = await bscAdvancedCall(env, "ankr_getLogs", {
           blockchain: ["bsc"],
           fromBlock: "earliest",
@@ -1842,6 +1850,7 @@ export default {
           },
           approvalOnly: summarize(approvalOnly, null),
           spenderOnly: summarize(spenderOnly, null),
+          approvalAndSpender: summarize(approvalAndSpender, null),
           ownerOnly: summarize(ownerOnly, ownerTopic),
           approvalAndOwner: summarize(approvalAndOwner, ownerTopic),
           checkedAt: new Date().toISOString()
