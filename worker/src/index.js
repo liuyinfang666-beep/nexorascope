@@ -1767,10 +1767,42 @@ export default {
       if (request.method !== "GET") {
         return json({ error: "Method not allowed" }, 405);
       }
+      const wallet = "0x2a7fa743178b83fab841000d57144c7cb1ded359";
+      const ownerTopic = "0x" + wallet.slice(2).padStart(64, "0");
+      const summarize = (result, expectedOwner) => {
+        const logs = Array.isArray(result?.logs) ? result.logs : null;
+        const first = logs?.[0] || null;
+        const firstTopics = Array.isArray(first?.topics) ? first.topics : [];
+        return {
+          resultType: Array.isArray(result) ? "array" : typeof result,
+          resultKeys: result && typeof result === "object" && !Array.isArray(result)
+            ? Object.keys(result).slice(0, 20)
+            : [],
+          logsFieldType: Array.isArray(result?.logs) ? "array" : typeof result?.logs,
+          logCount: logs?.length ?? null,
+          hasNextPageToken: Boolean(result?.nextPageToken),
+          firstLogKeys: first && typeof first === "object"
+            ? Object.keys(first).slice(0, 20)
+            : [],
+          firstLogTopicCount: firstTopics.length || null,
+          firstLogTopic0MatchesApproval: firstTopics.length > 0
+            ? String(firstTopics[0]).toLowerCase() === APPROVAL_TOPIC
+            : null,
+          firstLogTopic1MatchesWallet: expectedOwner && firstTopics.length > 1
+            ? String(firstTopics[1]).toLowerCase() === expectedOwner
+            : null
+        };
+      };
       try {
-        const wallet = "0x2a7fa743178b83fab841000d57144c7cb1ded359";
-        const ownerTopic = "0x" + wallet.slice(2).padStart(64, "0");
-        const result = await bscAdvancedCall(env, "ankr_getLogs", {
+        const ownerOnly = await bscAdvancedCall(env, "ankr_getLogs", {
+          blockchain: ["bsc"],
+          fromBlock: "earliest",
+          toBlock: "latest",
+          topics: [[], [ownerTopic]],
+          pageSize: 10,
+          descOrder: true
+        });
+        const approvalAndOwner = await bscAdvancedCall(env, "ankr_getLogs", {
           blockchain: ["bsc"],
           fromBlock: "earliest",
           toBlock: "latest",
@@ -1778,12 +1810,6 @@ export default {
           pageSize: 10,
           descOrder: true
         });
-        const logs = Array.isArray(result?.logs) ? result.logs : null;
-        const ownerMatchCount = logs
-          ? logs.filter(log =>
-              String(log?.topics?.[1] || "").toLowerCase() === ownerTopic
-            ).length
-          : null;
         return json({
           status: "success",
           provider: "Ankr Advanced API",
@@ -1792,21 +1818,13 @@ export default {
             blockchain: ["bsc"],
             fromBlock: "earliest",
             toBlock: "latest",
-            topic0: "ERC-20 Approval",
             pageSize: 10,
-            descOrder: true
+            descOrder: true,
+            approvalTopicConfigured: true,
+            walletTopicLength: ownerTopic.length
           },
-          resultType: Array.isArray(result) ? "array" : typeof result,
-          resultKeys: result && typeof result === "object" && !Array.isArray(result)
-            ? Object.keys(result).slice(0, 20)
-            : [],
-          logsFieldType: Array.isArray(result?.logs) ? "array" : typeof result?.logs,
-          logCount: logs?.length ?? null,
-          ownerMatchCount,
-          hasNextPageToken: Boolean(result?.nextPageToken),
-          firstLogKeys: logs?.[0] && typeof logs[0] === "object"
-            ? Object.keys(logs[0]).slice(0, 20)
-            : [],
+          ownerOnly: summarize(ownerOnly, ownerTopic),
+          approvalAndOwner: summarize(approvalAndOwner, ownerTopic),
           checkedAt: new Date().toISOString()
         });
       } catch (error) {
