@@ -1769,7 +1769,7 @@ export default {
       }
       const wallet = "0x2a7fa743178b83fab841000d57144c7cb1ded359";
       const ownerTopic = "0x" + wallet.slice(2).padStart(64, "0");
-      const summarize = (result, expectedOwner) => {
+      const summarize = (result, expectedOwner, includeLogSamples = false) => {
         const logs = Array.isArray(result?.logs) ? result.logs : null;
         const first = logs?.[0] || null;
         const firstTopics = Array.isArray(first?.topics) ? first.topics : [];
@@ -1791,7 +1791,17 @@ export default {
             : null,
           firstLogTopic1MatchesWallet: expectedOwner && firstTopics.length > 1
             ? String(firstTopics[1]).toLowerCase() === expectedOwner
-            : null
+            : null,
+          logSamples: includeLogSamples
+            ? (logs || []).slice(0, 5).map(log => ({
+                address: log?.address ?? null,
+                topics: Array.isArray(log?.topics) ? log.topics : [],
+                blockNumber: log?.blockNumber ?? null,
+                transactionHash: log?.transactionHash ?? null,
+                logIndex: log?.logIndex ?? null,
+                timestamp: log?.timestamp ?? null
+              }))
+            : undefined
         };
       };
       try {
@@ -1849,8 +1859,8 @@ export default {
             walletTopicLength: ownerTopic.length
           },
           approvalOnly: summarize(approvalOnly, null),
-          spenderOnly: summarize(spenderOnly, null),
-          approvalAndSpender: summarize(approvalAndSpender, null),
+          spenderOnly: summarize(spenderOnly, null, true),
+          approvalAndSpender: summarize(approvalAndSpender, null, true),
           ownerOnly: summarize(ownerOnly, ownerTopic),
           approvalAndOwner: summarize(approvalAndOwner, ownerTopic),
           checkedAt: new Date().toISOString()
