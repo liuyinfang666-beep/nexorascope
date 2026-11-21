@@ -1133,6 +1133,9 @@ async function discoverErc20Approvals(owner, chainId, env) {
       const logs = [];
       let pageToken = null;
       let logLimitReached = false;
+      let pagesFetched = 0;
+      let nextPageTokenSeen = false;
+      let rawLogCount = 0;
 
       // Ankr returns nextPageToken when more historical logs are available.
       // Follow it so a first-page-only response is never mistaken for a complete scan.
@@ -1148,9 +1151,12 @@ async function discoverErc20Approvals(owner, chainId, env) {
         if (pageToken) params.pageToken = pageToken;
 
         const result = await bscAdvancedCall(env, "ankr_getLogs", params);
+        pagesFetched += 1;
         const pageLogs = Array.isArray(result?.logs) ? result.logs : [];
+        rawLogCount += pageLogs.length;
         logs.push(...pageLogs);
         pageToken = result?.nextPageToken || null;
+        if (pageToken) nextPageTokenSeen = true;
         if (!pageToken) break;
         if (page === MAX_LOG_PAGES - 1) logLimitReached = true;
       }
@@ -1193,6 +1199,9 @@ async function discoverErc20Approvals(owner, chainId, env) {
         candidates: selected,
         candidateCount: all.length,
         logCount: logs.length,
+        rawLogCount,
+        pagesFetched,
+        nextPageTokenSeen,
         logLimitReached,
         candidateLimitReached,
         incomplete,
@@ -1200,7 +1209,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
         pageToken: logLimitReached ? pageToken : null
       };
     } catch (error) {
-      return { status: error.status || "error", message: String(error.message || "Ankr Approval log query failed").slice(0,300), candidates: [], candidateCount: 0, logCount: 0, logLimitReached: false, candidateLimitReached: false, incomplete: true };
+      return { status: error.status || "error", message: String(error.message || "Ankr Approval log query failed").slice(0,300), candidates: [], candidateCount: 0, logCount: 0, rawLogCount: 0, pagesFetched: 0, nextPageTokenSeen: false, logLimitReached: false, candidateLimitReached: false, incomplete: true };
     }
   }
   if (!env.ETHERSCAN_API_KEY) {
@@ -1707,6 +1716,9 @@ async function handleScan(request, env) {
       failureStats: {},
       failureSamples: [],
       logCount: discovery.logCount ?? null,
+      rawLogCount: discovery.rawLogCount ?? null,
+      pagesFetched: discovery.pagesFetched ?? null,
+      nextPageTokenSeen: discovery.nextPageTokenSeen ?? null,
       logLimitReached: discovery.logLimitReached ?? false,
       candidateLimitReached: discovery.candidateLimitReached ?? false,
       incomplete: discovery.incomplete === true
