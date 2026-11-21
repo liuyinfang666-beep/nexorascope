@@ -397,7 +397,6 @@ async function cachedProviderGet(
           error?.httpStatus || 0,
           error?.message || ""
         );
-
         if (
           attempt < MAX_RETRIES &&
           failureStatus === "unavailable"
@@ -797,7 +796,6 @@ async function getEtherscanSource(address, chainId, env) {
     const result = await cachedProviderGet("etherscan", url.toString(), env, { ttl: 120 });
     const data = result.data;
     const item = data?.result?.[0];
-
     if (String(data?.status) === "0" && !item?.SourceCode) {
       const msg =
         `${data?.message || "Explorer returned no source"} ` +
@@ -1197,8 +1195,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
               ? "Ankr Approval history scan completed; matching records were found."
               : "Ankr Approval history scan completed; no matching Approval logs were found for this wallet.",
         candidates: selected,
-        candidateCount: all.length,
-        logCount: logs.length,
+        candidateCount: all.length,        logCount: logs.length,
         rawLogCount,
         pagesFetched,
         nextPageTokenSeen,
@@ -1597,8 +1594,7 @@ async function handleScan(request, env) {
       };
 
       addFinding(
-        findings,
-        `${key} unavailable`,
+        findings,        `${key} unavailable`,
         `${providers[key].status}: ${providers[key].message}`,
         "neutral",
         0
@@ -1896,14 +1892,16 @@ export default {
         // global Approval logs, then matching the indexed owner locally.
         const crossCheck = {
           pageSize: 1000,
-          maxPages: 3,
+          maxPages: 5,
           pagesFetched: 0,
           rawLogCount: 0,
           matchingOwnerCount: 0,
           nextPageTokenSeen: false,
           sampleMatches: []
         };
-        let crossCheckPageToken = null;
+        // Continue a bounded diagnostic scan with ?pageToken=<returned token>.
+        let crossCheckPageToken = url.searchParams.get("pageToken") || null;
+        const inputPageTokenProvided = Boolean(crossCheckPageToken);
         for (let page = 0; page < crossCheck.maxPages; page++) {
           const params = {
             blockchain: ["bsc"],
@@ -1938,6 +1936,8 @@ export default {
           if (!crossCheckPageToken) break;
         }
         crossCheck.stoppedAtPageLimit = Boolean(crossCheckPageToken);
+        crossCheck.inputPageTokenProvided = inputPageTokenProvided;
+        crossCheck.nextPageToken = crossCheckPageToken;
 
         return json({
           status: "success",
@@ -1997,8 +1997,7 @@ export default {
       const data = await fetchEtherscanJson(apiUrl.toString());
 
       return json({
-        httpStatus: 200,
-        apiStatus: data.status,
+        httpStatus: 200,        apiStatus: data.status,
         apiMessage: data.message,
         resultCount: Array.isArray(data.result) ? data.result.length : null,
         result: Array.isArray(data.result) ? data.result.slice(0, 5) : data.result
