@@ -1128,20 +1128,39 @@ async function discoverErc20Approvals(owner, chainId, env) {
   if (String(chainId) === "56") {
     try {
       const ownerTopic = "0x" + owner.slice(2).toLowerCase().padStart(64, "0");
-      const result = await bscAdvancedCall(env, "ankr_getLogs", {
-        blockchain: ["bsc"],
-        fromBlock: "earliest",
-        toBlock: "latest",
-        topics: [[APPROVAL_TOPIC], [ownerTopic]],
-        pageSize: 10000,
-        descOrder: true
-      });
-      const logs = Array.isArray(result?.logs) ? result.logs : [];
+      const PAGE_SIZE = 10000;
+      const MAX_LOG_PAGES = 20;
+      const logs = [];
+      let pageToken = null;
+      let logLimitReached = false;
+
+      // Ankr returns nextPageToken when more historical logs are available.
+      // Follow it so a first-page-only response is never mistaken for a complete scan.
+      for (let page = 0; page < MAX_LOG_PAGES; page++) {
+        const params = {
+          blockchain: ["bsc"],
+          fromBlock: "earliest",
+          toBlock: "latest",
+          topics: [[APPROVAL_TOPIC], [ownerTopic]],
+          pageSize: PAGE_SIZE,
+          descOrder: true
+        };
+        if (pageToken) params.pageToken = pageToken;
+
+        const result = await bscAdvancedCall(env, "ankr_getLogs", params);
+        const pageLogs = Array.isArray(result?.logs) ? result.logs : [];
+        logs.push(...pageLogs);
+        pageToken = result?.nextPageToken || null;
+        if (!pageToken) break;
+        if (page === MAX_LOG_PAGES - 1) logLimitReached = true;
+      }
+
       const candidates = new Map();
       for (const log of logs) {
         const topics = log?.topics || [];
         if (
           topics.length < 3 ||
+          String(topics[0] || "").toLowerCase() !== APPROVAL_TOPIC.toLowerCase() ||
           String(topics[1] || "").toLowerCase() !== ownerTopic.toLowerCase() ||
           !ADDRESS_RE.test(log.address || "")
         ) continue;
@@ -1153,19 +1172,32 @@ async function discoverErc20Approvals(owner, chainId, env) {
           candidates.set(key, { tokenAddress: log.address, spender, lastSeenBlock: log.blockNumber || "0x0", lastTransactionHash: log.transactionHash || null });
         }
       }
-      const all = [...candidates.values()].sort((a,b) => blockNumberToBigInt(a.lastSeenBlock) > blockNumberToBigInt(b.lastSeenBlock) ? -1 : 1);
-      const selected = all.slice(0,150);
+
+      const all = [...candidates.values()].sort((a, b) => {
+        const blockA = blockNumberToBigInt(a.lastSeenBlock);
+        const blockB = blockNumberToBigInt(b.lastSeenBlock);
+        return blockA === blockB ? 0 : blockA > blockB ? -1 : 1;
+      });
+      const selected = all.slice(0, 150);
+      const candidateLimitReached = all.length > 150;
+      const incomplete = logLimitReached || candidateLimitReached;
       return {
         status: "success",
-        message: result?.nextPageToken ? "Ankr returned the first Approval log page; more pages remain." : "Ankr Approval log query completed.",
+        message: logLimitReached
+          ? "Ankr Approval history reached the 20-page safety limit; results may be incomplete."
+          : candidateLimitReached
+            ? "Approval records were found; the display is limited to the newest 150 candidates."
+            : all.length
+              ? "Ankr Approval history scan completed; matching records were found."
+              : "Ankr Approval history scan completed; no matching Approval logs were found for this wallet.",
         candidates: selected,
         candidateCount: all.length,
         logCount: logs.length,
-        logLimitReached: !!result?.nextPageToken,
-        candidateLimitReached: all.length > 150,
-        incomplete: !!result?.nextPageToken || all.length > 150,
+        logLimitReached,
+        candidateLimitReached,
+        incomplete,
         latestBlock: null,
-        pageToken: result?.nextPageToken || null
+        pageToken: logLimitReached ? pageToken : null
       };
     } catch (error) {
       return { status: error.status || "error", message: String(error.message || "Ankr Approval log query failed").slice(0,300), candidates: [], candidateCount: 0, logCount: 0, logLimitReached: false, candidateLimitReached: false, incomplete: true };
