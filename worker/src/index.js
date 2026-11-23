@@ -1977,6 +1977,35 @@ export default {
       }
     }
 
+    if (url.pathname === "/api/bsc-nft-token-approval") {
+      if (request.method !== "GET") return withCors(json({ error: "Method not allowed" }, 405), request);
+      const owner = String(url.searchParams.get("owner") || "").trim().toLowerCase();
+      const tokenContract = String(url.searchParams.get("contract") || "").trim().toLowerCase();
+      const tokenId = String(url.searchParams.get("tokenId") || "").trim();
+      if (!ADDRESS_RE.test(owner) || !ADDRESS_RE.test(tokenContract) || !/^(0|[1-9][0-9]*)$/.test(tokenId)) {
+        return withCors(json({ status: "error", message: "Valid owner, contract and decimal tokenId are required." }, 400), request);
+      }
+      try {
+        const encodedId = BigInt(tokenId).toString(16).padStart(64, "0");
+        const raw = await bscEthCall(env, tokenContract, "0x081812fc" + encodedId);
+        if (!/^0x[0-9a-f]{64}$/i.test(raw)) throw new Error("Contract returned an invalid getApproved result");
+        const approved = "0x" + raw.slice(-40);
+        const active = !/^0x0{40}$/i.test(approved);
+        return withCors(json({
+          status: "success", chainId: "56", owner, tokenContract, tokenId,
+          method: "ERC-721 getApproved(uint256)", approvedAddress: approved,
+          active, checkedAt: new Date().toISOString()
+        }), request);
+      } catch (error) {
+        return withCors(json({
+          status: "error", chainId: "56", owner, tokenContract, tokenId,
+          failureType: error?.status || "call_error",
+          message: String(error?.message || "getApproved call failed").slice(0, 200),
+          checkedAt: new Date().toISOString()
+        }, 502), request);
+      }
+    }
+
     if (url.pathname === "/api/bsc-owned-nfts") {
       if (request.method !== "GET") return withCors(json({ error: "Method not allowed" }, 405), request);
       const owner = String(url.searchParams.get("address") || "").trim().toLowerCase();
