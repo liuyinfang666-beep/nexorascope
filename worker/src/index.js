@@ -17,6 +17,9 @@ const GOPLUS_API = "https://api.gopluslabs.io";
 const APPROVAL_TOPIC =
   "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
 
+const APPROVAL_FOR_ALL_TOPIC =
+  "0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31";
+
 let nextEtherscanRequestAt = 0;
 const ETHERSCAN_REQUEST_INTERVAL_MS = 400;
 
@@ -1799,6 +1802,105 @@ export default {
       request.method === "OPTIONS"
     ) {
       return withCors(new Response(null, { status: 204 }), request);
+    }
+
+    if (url.pathname === "/api/bsc-nft-approvals") {
+      if (request.method !== "GET") {
+        return withCors(json({ error: "Method not allowed" }, 405), request);
+      }
+      const owner = String(url.searchParams.get("address") || "").trim().toLowerCase();
+      if (!ADDRESS_RE.test(owner)) {
+        return withCors(json({ status: "error", message: "A valid owner address is required." }, 400), request);
+      }
+      try {
+        const ownerTopic = "0x" + owner.slice(2).padStart(64, "0");
+        const params = {
+          blockchain: ["bsc"],
+          fromBlock: "earliest",
+          toBlock: "latest",
+          topics: [[APPROVAL_FOR_ALL_TOPIC], [ownerTopic]],
+          pageSize: 1000,
+          descOrder: true
+        };
+        const inputPageToken = url.searchParams.get("pageToken");
+        if (inputPageToken) params.pageToken = inputPageToken;
+        const result = await bscAdvancedCall(env, "ankr_getLogs", params);
+        const logs = Array.isArray(result?.logs) ? result.logs : [];
+        const pairs = new Map();
+        for (const log of logs) {
+          const topics = Array.isArray(log?.topics) ? log.topics : [];
+          if (String(topics[0] || "").toLowerCase() !== APPROVAL_FOR_ALL_TOPIC ||
+              String(topics[1] || "").toLowerCase() !== ownerTopic) continue;
+          const operator = "0x" + String(topics[2] || "").slice(-40);
+          const tokenContract = String(log?.address || "").toLowerCase();
+          if (!ADDRESS_RE.test(operator) || !ADDRESS_RE.test(tokenContract)) continue;
+          pairs.set(tokenContract + ":" + operator.toLowerCase(), { tokenContract, operator });
+        }
+        const allowanceChecks = [];
+        for (const pair of Array.from(pairs.values()).slice(0, 20)) {
+          try {
+            const pad = value => value.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+            const callData = "0xe985e9c5" + pad(owner) + pad(pair.operator);
+            const raw = await bscEthCall(env, pair.tokenContract, callData);
+            const isApproved = /^0x[0-9a-f]*$/i.test(raw) && BigInt(raw || "0x0") !== 0n;
+            allowanceChecks.push({
+              tokenContract: pair.tokenContract,
+              ownerAddress: owner,
+              operatorAddress: pair.operator,
+              status: "success",
+              active: isApproved,
+              isApprovedForAll: isApproved,
+              rawResult: raw
+            });
+          } catch (error) {
+            allowanceChecks.push({
+              tokenContract: pair.tokenContract,
+              ownerAddress: owner,
+              operatorAddress: pair.operator,
+              status: error?.status || "unavailable",
+              active: null,
+              isApprovedForAll: null,
+              message: String(error?.message || "isApprovedForAll call failed").slice(0, 180)
+            });
+          }
+        }
+        const eventRows = logs.filter(log => {
+          const topics = Array.isArray(log?.topics) ? log.topics : [];
+          return String(topics[0] || "").toLowerCase() === APPROVAL_FOR_ALL_TOPIC &&
+            String(topics[1] || "").toLowerCase() === ownerTopic;
+        }).map(log => ({
+          tokenContract: log.address || null,
+          operatorAddress: "0x" + String(log.topics?.[2] || "").slice(-40),
+          approvedInEvent: /^0x0*1$/i.test(String(log.data || "")),
+          blockNumber: log.blockNumber || null,
+          transactionHash: log.transactionHash || null
+        }));
+        return withCors(json({
+          status: "success",
+          chainId: "56",
+          owner,
+          method: "ankr_getLogs",
+          filter: "ApprovalForAll topic with topics[1] equal to owner",
+          rawLogCount: logs.length,
+          matchedApprovalForAllEventCount: eventRows.length,
+          events: eventRows,
+          uniqueTokenOperatorPairCount: pairs.size,
+          allowanceChecks,
+          allowanceChecksLimited: pairs.size > allowanceChecks.length,
+          nextPageToken: result?.nextPageToken || null,
+          nextPageTokenSeen: Boolean(result?.nextPageToken),
+          checkedAt: new Date().toISOString()
+        }), request);
+      } catch (error) {
+        return withCors(json({
+          status: "error",
+          provider: "Ankr Advanced API",
+          failureType: error?.status || "error",
+          httpStatus: error?.httpStatus || null,
+          message: String(error?.message || "NFT approval query failed").slice(0, 240),
+          checkedAt: new Date().toISOString()
+        }, 502), request);
+      }
     }
 
     if (url.pathname === "/api/bsc-owner-approvals") {
