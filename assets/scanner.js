@@ -5,6 +5,14 @@
   const chainInput = document.getElementById("chainId");
   const scanButton = document.getElementById("scanButton");
   const errorBox = document.getElementById("scanError");
+  const progressBox = document.getElementById("scanProgress");
+  const progressTitle = document.getElementById("scanProgressTitle");
+  const progressDetail = document.getElementById("scanProgressDetail");
+  function setProgress(title, detail) {
+    progressTitle.textContent = title;
+    progressDetail.textContent = detail;
+    progressBox.classList.remove("hidden");
+  }
   const results = document.getElementById("resultsSection");
   let mode = "wallet";
 
@@ -96,6 +104,7 @@
         /rate.?limit|too many requests|call rate limit exhausted/i.test(message);
       if (rateLimited && attempt < maxRateLimitRetries) {
         const waitMs = Math.min(10000 * (2 ** attempt), 40000);
+        setProgress("Provider is busy — retrying automatically", `Retry ${attempt + 1} of ${maxRateLimitRetries}. Waiting ${Math.round(waitMs / 1000)} seconds before trying again.`);
         await new Promise(resolve => setTimeout(resolve, waitMs));
         continue;
       }
@@ -183,7 +192,9 @@
     }
 
     scanButton.disabled = true;
-    scanButton.textContent = "Starting scan…";
+    scanButton.textContent = "Scanning…";
+    setProgress("Starting security scan…", "Contacting the configured providers and collecting security indicators.");
+    progressBox.scrollIntoView({behavior:"smooth",block:"center"});
 
     try {
       const data = await postJson({mode,chainId:chainInput.value,address});
@@ -216,7 +227,8 @@
           let pageToken = session.pageToken;
           let pageNumber = 1;
           while (pageToken) {
-            scanButton.textContent = `Loading BNB approval logs… page ${pageNumber}`;
+            scanButton.textContent = `Loading approval data… page ${pageNumber}`;
+            setProgress("Discovering BNB Chain approval events", `Loading historical approval records — page ${pageNumber}. This can take some time.`);
             const page = await postJson({
               phase:"approval_log_batch",
               chainId:chainInput.value,
@@ -241,6 +253,7 @@
         while (cursor < session.candidates.length) {
           scanButton.textContent =
             `Checking approvals… ${Math.min(cursor + session.batchSize, session.candidates.length)}/${session.candidates.length}`;
+          setProgress("Verifying current token permissions", `Checking ${Math.min(cursor + session.batchSize, session.candidates.length)} of ${session.candidates.length} discovered approval candidates.`);
 
           const batch = await postJson({
             phase:"allowance_batch",
@@ -316,12 +329,15 @@
         addDiscoveryFindings(data, stats);
       }
 
+      setProgress("Preparing your scan report…", "Organizing provider responses, findings and permission details.");
       calculateIndicatorScore(data);
       renderReport(data);
+      progressBox.classList.add("hidden");
     } catch (error) {
       errorBox.textContent =
         `${error.message || "Unable to reach the scan service."} If a batch failed, restart the scan; do not treat partial data as a complete result.`;
       errorBox.classList.remove("hidden");
+      progressBox.classList.add("hidden");
     } finally {
       scanButton.disabled = false;
       scanButton.textContent = mode === "wallet" ? "Run wallet scan" : "Run contract scan";
