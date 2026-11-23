@@ -1801,6 +1801,83 @@ export default {
       return withCors(new Response(null, { status: 204 }), request);
     }
 
+    if (url.pathname === "/api/bsc-owner-approvals") {
+      if (request.method !== "GET") {
+        return withCors(json({ error: "Method not allowed" }, 405), request);
+      }
+      const owner = String(url.searchParams.get("address") || "").trim().toLowerCase();
+      if (!ADDRESS_RE.test(owner)) {
+        return withCors(json({ status: "error", message: "A valid owner address is required." }, 400), request);
+      }
+      try {
+        const ownerTopic = "0x" + owner.slice(2).padStart(64, "0");
+        const params = {
+          blockchain: ["bsc"],
+          fromBlock: "earliest",
+          toBlock: "latest",
+          topics: [[APPROVAL_TOPIC], [ownerTopic]],
+          pageSize: 1000,
+          descOrder: true
+        };
+        const inputPageToken = url.searchParams.get("pageToken");
+        if (inputPageToken) params.pageToken = inputPageToken;
+        const result = await bscAdvancedCall(env, "ankr_getLogs", params);
+        const logs = Array.isArray(result?.logs) ? result.logs : [];
+        const pairs = new Map();
+        let matchedApprovalEventCount = 0;
+        for (const log of logs) {
+          const topics = Array.isArray(log?.topics) ? log.topics : [];
+          if (String(topics[0] || "").toLowerCase() !== APPROVAL_TOPIC ||
+              String(topics[1] || "").toLowerCase() !== ownerTopic) continue;
+          matchedApprovalEventCount += 1;
+          const spender = "0x" + String(topics[2] || "").slice(-40);
+          const token = String(log?.address || "").toLowerCase();
+          if (!ADDRESS_RE.test(spender) || !ADDRESS_RE.test(token)) continue;
+          pairs.set(token + ":" + spender.toLowerCase(), { token, spender });
+        }
+        const allowanceChecks = [];
+        for (const pair of Array.from(pairs.values()).slice(0, 20)) {
+          const check = await readErc20Allowance(pair.token, owner, pair.spender, "56", env);
+          allowanceChecks.push({
+            tokenAddress: pair.token,
+            ownerAddress: owner,
+            spenderAddress: pair.spender,
+            status: check.status,
+            active: check.active ?? null,
+            allowance: check.allowance ?? null,
+            rawAllowance: check.rawAllowance ?? null,
+            unlimited: check.unlimited ?? null,
+            failureType: check.failureType ?? null,
+            message: check.message ?? null
+          });
+        }
+        return withCors(json({
+          status: "success",
+          chainId: "56",
+          owner,
+          method: "ankr_getLogs",
+          filter: "Approval topic with topics[1] equal to owner",
+          rawLogCount: logs.length,
+          matchedApprovalEventCount,
+          uniqueTokenSpenderPairCount: pairs.size,
+          allowanceChecks,
+          allowanceChecksLimited: pairs.size > allowanceChecks.length,
+          nextPageToken: result?.nextPageToken || null,
+          nextPageTokenSeen: Boolean(result?.nextPageToken),
+          checkedAt: new Date().toISOString()
+        }), request);
+      } catch (error) {
+        return withCors(json({
+          status: "error",
+          provider: "Ankr Advanced API",
+          failureType: error?.status || "error",
+          httpStatus: error?.httpStatus || null,
+          message: String(error?.message || "Owner approval query failed").slice(0, 240),
+          checkedAt: new Date().toISOString()
+        }, 502), request);
+      }
+    }
+
     if (url.pathname === "/api/bsc-spender-approvals") {
       if (request.method !== "GET") {
         return withCors(json({ error: "Method not allowed" }, 405), request);
