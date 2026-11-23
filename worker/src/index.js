@@ -1977,6 +1977,42 @@ export default {
       }
     }
 
+    if (url.pathname === "/api/bsc-owned-nfts") {
+      if (request.method !== "GET") return withCors(json({ error: "Method not allowed" }, 405), request);
+      const owner = String(url.searchParams.get("address") || "").trim().toLowerCase();
+      if (!ADDRESS_RE.test(owner)) return withCors(json({ status: "error", message: "A valid wallet address is required." }, 400), request);
+      try {
+        const params = { blockchain: ["bsc"], walletAddress: owner, pageSize: 50 };
+        const pageToken = url.searchParams.get("pageToken");
+        if (pageToken) params.pageToken = pageToken;
+        const result = await bscAdvancedCall(env, "ankr_getNFTsByOwner", params);
+        const assets = Array.isArray(result?.assets) ? result.assets : [];
+        return withCors(json({
+          status: "success", chainId: "56", owner, method: "ankr_getNFTsByOwner",
+          nftCount: assets.length,
+          assets: assets.map(asset => ({
+            contractAddress: asset.contractAddress || null,
+            contractType: asset.contractType || null,
+            tokenId: asset.tokenId || null,
+            name: asset.name || null,
+            collectionName: asset.collectionName || null,
+            symbol: asset.symbol || null,
+            quantity: asset.quantity || null
+          })),
+          nextPageToken: result?.nextPageToken || null,
+          nextPageTokenSeen: Boolean(result?.nextPageToken),
+          checkedAt: new Date().toISOString()
+        }), request);
+      } catch (error) {
+        return withCors(json({
+          status: "error", provider: "Ankr Advanced API",
+          failureType: error?.status || "error", httpStatus: error?.httpStatus || null,
+          message: String(error?.message || "NFT ownership query failed").slice(0, 240),
+          checkedAt: new Date().toISOString()
+        }, 502), request);
+      }
+    }
+
     if (url.pathname === "/api/bsc-owner-approvals") {
       if (request.method !== "GET") {
         return withCors(json({ error: "Method not allowed" }, 405), request);
