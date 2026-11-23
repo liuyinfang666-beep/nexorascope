@@ -12,6 +12,11 @@
     progressTitle.textContent = title;
     progressDetail.textContent = detail;
     progressBox.classList.remove("hidden");
+    document.body.classList.add("scan-modal-open");
+  }
+  function hideProgress() {
+    progressBox.classList.add("hidden");
+    document.body.classList.remove("scan-modal-open");
   }
   const results = document.getElementById("resultsSection");
   let mode = "wallet";
@@ -117,10 +122,12 @@
 
   function calculateIndicatorScore(data) {
     const providers = Object.values(data.providers || {});
+    // overallStatus is the API's summary of required provider checks.
+    // Optional provider entries may be unavailable without invalidating a
+    // completed required scan.
     const providersComplete =
       data.overallStatus === "complete" &&
-      providers.length > 0 &&
-      providers.every(provider => provider && provider.status === "success");
+      providers.length > 0;
 
     const discovery = data.mode === "wallet"
       ? data.providers?.erc20_onchain_discovery
@@ -194,7 +201,7 @@
     scanButton.disabled = true;
     scanButton.textContent = "Scanning…";
     setProgress("Starting security scan…", "Contacting the configured providers and collecting security indicators.");
-    progressBox.scrollIntoView({behavior:"smooth",block:"center"});
+    // The progress dialog is fixed above the page; no scrolling is needed.
 
     try {
       const data = await postJson({mode,chainId:chainInput.value,address});
@@ -332,12 +339,12 @@
       setProgress("Preparing your scan report…", "Organizing provider responses, findings and permission details.");
       calculateIndicatorScore(data);
       renderReport(data);
-      progressBox.classList.add("hidden");
+      hideProgress();
     } catch (error) {
       errorBox.textContent =
         `${error.message || "Unable to reach the scan service."} If a batch failed, restart the scan; do not treat partial data as a complete result.`;
       errorBox.classList.remove("hidden");
-      progressBox.classList.add("hidden");
+      hideProgress();
     } finally {
       scanButton.disabled = false;
       scanButton.textContent = mode === "wallet" ? "Run wallet scan" : "Run contract scan";
