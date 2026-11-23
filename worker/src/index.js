@@ -1797,6 +1797,19 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // Internal diagnostic endpoints are intentionally disabled on public
+    // deployments. Keep these routes unavailable to prevent unauthenticated
+    // third parties from consuming provider quotas or retrieving test data.
+    const disabledDiagnosticRoutes = new Set([
+      "/api/ankr-diagnostics",
+      "/api/etherscan-test",
+      "/api/approval-log-test",
+      "/api/usdc-allowance-test"
+    ]);
+    if (disabledDiagnosticRoutes.has(url.pathname)) {
+      return withCors(json({ error: "Not found" }, 404), request);
+    }
+
     if (
       ["/api/scan", "/api/health", "/api/ankr-diagnostics"].includes(url.pathname) &&
       request.method === "OPTIONS"
