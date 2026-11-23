@@ -1851,6 +1851,7 @@ export default {
           pagesFetched: 0,
           rawLogCount: 0,
           matchingOwnerCount: 0,
+          matchingSpenderCount: 0,
           nextPageTokenSeen: false,
           sampleMatches: []
         };
@@ -1873,17 +1874,22 @@ export default {
           crossCheck.rawLogCount += pageLogs.length;
           for (const log of pageLogs) {
             const topics = Array.isArray(log?.topics) ? log.topics : [];
-            if (String(topics[0] || "").toLowerCase() === APPROVAL_TOPIC &&
-                String(topics[1] || "").toLowerCase() === ownerTopic) {
-              crossCheck.matchingOwnerCount += 1;
-              if (crossCheck.sampleMatches.length < 5) {
-                crossCheck.sampleMatches.push({
-                  tokenAddress: log?.address ?? null,
-                  spenderTopic: topics[2] ?? null,
-                  blockNumber: log?.blockNumber ?? null,
-                  transactionHash: log?.transactionHash ?? null
-                });
-              }
+            if (String(topics[0] || "").toLowerCase() !== APPROVAL_TOPIC) continue;
+            const ownerMatches = String(topics[1] || "").toLowerCase() === ownerTopic;
+            const spenderMatches = String(topics[2] || "").toLowerCase() === ownerTopic;
+            if (ownerMatches) crossCheck.matchingOwnerCount += 1;
+            if (spenderMatches) crossCheck.matchingSpenderCount += 1;
+            if ((ownerMatches || spenderMatches) && crossCheck.sampleMatches.length < 10) {
+              crossCheck.sampleMatches.push({
+                matchedRole: ownerMatches && spenderMatches
+                  ? "owner_and_spender"
+                  : ownerMatches ? "owner" : "spender",
+                tokenAddress: log?.address ?? null,
+                ownerTopic: topics[1] ?? null,
+                spenderTopic: topics[2] ?? null,
+                blockNumber: log?.blockNumber ?? null,
+                transactionHash: log?.transactionHash ?? null
+              });
             }
           }
           crossCheckPageToken = result?.nextPageToken || null;
