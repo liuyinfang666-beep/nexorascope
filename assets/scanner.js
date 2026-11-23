@@ -51,8 +51,10 @@
       data.score === null || data.score === undefined ? "—" : `${data.score}/100`;
     document.getElementById("scoreDescription").textContent =
       data.score === null || data.score === undefined
-        ? "Insufficient data — no indicator score can be calculated."
-        : "Indicator score based on positive findings returned by the configured checks; not a safety probability.";
+        ? "Insufficient data — required provider checks were not completed."
+        : data.score === 95
+          ? "No risk indicators detected in the completed checks. This does not prove the address is safe."
+          : "Indicator score reduced by positive risk indicators; not a safety probability.";
 
     const providerGrid = document.getElementById("providerGrid");
     providerGrid.innerHTML = Object.entries(data.providers || {}).map(([key, p]) =>
@@ -104,6 +106,39 @@
     }
   }
 
+  function calculateIndicatorScore(data) {
+    const providers = Object.values(data.providers || {});
+    const providersComplete =
+      data.overallStatus === "complete" &&
+      providers.length > 0 &&
+      providers.every(provider => provider && provider.status === "success");
+
+    const discovery = data.mode === "wallet"
+      ? data.providers?.erc20_onchain_discovery
+      : null;
+    const discoveryComplete = data.mode !== "wallet" || (
+      discovery &&
+      discovery.status === "success" &&
+      discovery.incomplete !== true &&
+      discovery.logLimitReached !== true &&
+      discovery.candidateLimitReached !== true &&
+      Number(discovery.failedCount || 0) === 0 &&
+      Number(discovery.formattingIncompleteCount || 0) === 0
+    );
+
+    if (!providersComplete || !discoveryComplete) {
+      data.score = null;
+      data.scoreLabel = "Insufficient data";
+      return;
+    }
+
+    const assessed = (Array.isArray(data.findings) ? data.findings : [])
+      .filter(f => Number(f.weight) > 0);
+    const penalty = assessed.reduce((sum, finding) => sum + Number(finding.weight), 0);
+    data.score = Math.max(0, Math.min(95, 95 - penalty));
+    data.scoreLabel = "Indicator score";
+  }
+
   function addDiscoveryFindings(data, stats) {
     const unlimitedCount = data.approvals.filter(a => a.unlimited === true).length;
     const activeCount = data.approvals.length;
@@ -132,11 +167,7 @@
         weight:0
       });
     }
-    const assessed = data.findings.filter(f => Number(f.weight) > 0);
-    data.score = assessed.length
-      ? Math.max(0, Math.min(100, 100 - assessed.reduce((sum, f) => sum + Number(f.weight), 0)))
-      : null;
-    data.scoreLabel = data.score === null ? "Insufficient data" : "Indicator score";
+    // Final score is assigned after provider and discovery completeness are known.
   }
 
   form.addEventListener("submit", async event => {
@@ -285,6 +316,7 @@
         addDiscoveryFindings(data, stats);
       }
 
+      calculateIndicatorScore(data);
       renderReport(data);
     } catch (error) {
       errorBox.textContent =
