@@ -1903,6 +1903,80 @@ export default {
       }
     }
 
+    if (url.pathname === "/api/bsc-nft-operator-approvals") {
+      if (request.method !== "GET") {
+        return withCors(json({ error: "Method not allowed" }, 405), request);
+      }
+      const operator = String(url.searchParams.get("address") || "").trim().toLowerCase();
+      if (!ADDRESS_RE.test(operator)) {
+        return withCors(json({ status: "error", message: "A valid operator address is required." }, 400), request);
+      }
+      try {
+        const operatorTopic = "0x" + operator.slice(2).padStart(64, "0");
+        const params = {
+          blockchain: ["bsc"],
+          fromBlock: "earliest",
+          toBlock: "latest",
+          topics: [[APPROVAL_FOR_ALL_TOPIC], [], [operatorTopic]],
+          pageSize: 1000,
+          descOrder: true
+        };
+        const inputPageToken = url.searchParams.get("pageToken");
+        if (inputPageToken) params.pageToken = inputPageToken;
+        const result = await bscAdvancedCall(env, "ankr_getLogs", params);
+        const logs = Array.isArray(result?.logs) ? result.logs : [];
+        const pairs = new Map();
+        for (const log of logs) {
+          const topics = Array.isArray(log?.topics) ? log.topics : [];
+          if (String(topics[0] || "").toLowerCase() !== APPROVAL_FOR_ALL_TOPIC ||
+              String(topics[2] || "").toLowerCase() !== operatorTopic) continue;
+          const owner = "0x" + String(topics[1] || "").slice(-40);
+          const tokenContract = String(log?.address || "").toLowerCase();
+          if (!ADDRESS_RE.test(owner) || !ADDRESS_RE.test(tokenContract)) continue;
+          pairs.set(tokenContract + ":" + owner.toLowerCase(), { tokenContract, owner });
+        }
+        const allowanceChecks = [];
+        for (const pair of Array.from(pairs.values()).slice(0, 20)) {
+          try {
+            const pad = value => value.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+            const raw = await bscEthCall(env, pair.tokenContract, "0xe985e9c5" + pad(pair.owner) + pad(operator));
+            const active = /^0x[0-9a-f]*$/i.test(raw) && BigInt(raw || "0x0") !== 0n;
+            allowanceChecks.push({ tokenContract: pair.tokenContract, ownerAddress: pair.owner, operatorAddress: operator, status: "success", active, isApprovedForAll: active, rawResult: raw });
+          } catch (error) {
+            allowanceChecks.push({ tokenContract: pair.tokenContract, ownerAddress: pair.owner, operatorAddress: operator, status: error?.status || "unavailable", active: null, isApprovedForAll: null, message: String(error?.message || "isApprovedForAll call failed").slice(0, 180) });
+          }
+        }
+        const events = logs.filter(log => {
+          const topics = Array.isArray(log?.topics) ? log.topics : [];
+          return String(topics[0] || "").toLowerCase() === APPROVAL_FOR_ALL_TOPIC &&
+            String(topics[2] || "").toLowerCase() === operatorTopic;
+        }).map(log => ({
+          tokenContract: log.address || null,
+          ownerAddress: "0x" + String(log.topics?.[1] || "").slice(-40),
+          operatorAddress: operator,
+          approvedInEvent: /^0x0*1$/i.test(String(log.data || "")),
+          blockNumber: log.blockNumber || null,
+          transactionHash: log.transactionHash || null
+        }));
+        return withCors(json({
+          status: "success", chainId: "56", operator, method: "ankr_getLogs",
+          filter: "ApprovalForAll topic with topics[2] equal to operator",
+          rawLogCount: logs.length, matchedApprovalForAllEventCount: events.length,
+          events, uniqueTokenOwnerPairCount: pairs.size, allowanceChecks,
+          allowanceChecksLimited: pairs.size > allowanceChecks.length,
+          nextPageToken: result?.nextPageToken || null,
+          nextPageTokenSeen: Boolean(result?.nextPageToken), checkedAt: new Date().toISOString()
+        }), request);
+      } catch (error) {
+        return withCors(json({
+          status: "error", provider: "Ankr Advanced API",
+          failureType: error?.status || "error", httpStatus: error?.httpStatus || null,
+          message: String(error?.message || "NFT operator approval query failed").slice(0, 240),
+          checkedAt: new Date().toISOString()
+        }, 502), request);
+      }
+    }
+
     if (url.pathname === "/api/bsc-owner-approvals") {
       if (request.method !== "GET") {
         return withCors(json({ error: "Method not allowed" }, 405), request);
