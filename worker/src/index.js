@@ -449,7 +449,7 @@ function addFinding(
 function scoreFindings(findings) {
   const assessed = findings.filter(f => f.weight > 0);
 
-  if (!assessed.length) return null;
+  if (!assessed.length) return 95;
 
   return Math.max(
     0,
@@ -932,33 +932,84 @@ async function ankrAdvancedCall(env, method, params) {
 }
 
 async function ankrEthCall(env, chainId, to, data) {
-  const blockchain = ankrBlockchainForChain(chainId);
+  const id = String(chainId);
+  const endpoint = id === "8453"
+    ? String(env.ANKR_BASE_RPC_URL || "").trim()
+    : id === "56"
+      ? String(env.ANKR_BSC_RPC_URL || "").trim()
+      : "";
 
-  if (!blockchain) {
+  if (!endpoint) {
     throw Object.assign(
-      new Error(`Ankr does not support chainId ${chainId} in this configuration`),
-      { status: "unavailable" }
+      new Error(id === "8453"
+        ? "ANKR_BASE_RPC_URL is not configured; set it to the Ankr Base Chain RPC endpoint"
+        : id === "56"
+          ? "ANKR_BSC_RPC_URL is not configured; set it to the Ankr BNB Chain RPC endpoint"
+          : `Ankr Chain RPC does not support chainId ${id} in this configuration`),
+      { status: "unavailable", failureType: "missing_chain_rpc_endpoint" }
     );
   }
 
-  const result = await ankrAdvancedCall(
-    env,
-    "eth_call",
-    [
-      {
-        blockchain,
-        to,
-        data
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json"
       },
-      "latest"
-    ]
-  );
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_call",
+        params: [{ to, data }, "latest"]
+      }),
+      signal: AbortSignal.timeout(20000)
+    });
 
-  if (typeof result !== "string" || !/^0x[0-9a-f]*$/i.test(result)) {
-    throw new Error("Ankr returned an invalid eth_call result");
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      throw Object.assign(new Error("Ankr Chain RPC returned invalid JSON"), {
+        status: "unavailable",
+        httpStatus: response.status
+      });
+    }
+
+    if (!response.ok || payload?.error) {
+      const message = payload?.error?.message || `Ankr Chain RPC HTTP ${response.status}`;
+      const failureStatus = classifyFailure(response.status, message);
+      const error = Object.assign(new Error(message), {
+        status: failureStatus,
+        httpStatus: response.status,
+        failureType: failureStatus
+      });
+      lastError = error;
+
+      if (attempt === 0 && failureStatus === "rate_limited") {
+        const retryAfter = Number(response.headers.get("retry-after") || 10);
+        const waitMs = Math.min(Math.max(retryAfter * 1000, 1000), 15000);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
+      throw error;
+    }
+
+    const result = payload?.result;
+    if (typeof result !== "string" || !/^0x[0-9a-f]*$/i.test(result)) {
+      throw Object.assign(new Error("Ankr Chain RPC returned an invalid eth_call result"), {
+        status: "error",
+        httpStatus: response.status,
+        failureType: "invalid_eth_call_result"
+      });
+    }
+    return result;
   }
 
-  return result;
+  throw lastError || Object.assign(new Error("Ankr Chain RPC request failed"), {
+    status: "unavailable"
+  });
 }
 
 // Compatibility wrappers for existing BNB Chain-only endpoints.
@@ -1049,12 +1100,20 @@ async function readErc20Allowance(token, owner, spender, chainId, env) {
   const id = String(chainId);
   const useAnkr = Boolean(ankrBlockchainForChain(id));
 
-  if (useAnkr ? !env.BSC_RPC_URL : !env.ETHERSCAN_API_KEY) {
+  const chainRpcConfigured = id === "8453"
+    ? Boolean(env.ANKR_BASE_RPC_URL)
+    : id === "56"
+      ? Boolean(env.ANKR_BSC_RPC_URL)
+      : false;
+
+  if (useAnkr ? !chainRpcConfigured : !env.ETHERSCAN_API_KEY) {
     return {
       status: "unavailable",
-      failureType: useAnkr ? "missing_ankr_endpoint" : "missing_api_key",
+      failureType: useAnkr ? "missing_chain_rpc_endpoint" : "missing_api_key",
       message: useAnkr
-        ? "BSC_RPC_URL Ankr Multichain endpoint is not configured"
+        ? (id === "8453"
+            ? "ANKR_BASE_RPC_URL is not configured"
+            : "ANKR_BSC_RPC_URL is not configured")
         : "ETHERSCAN_API_KEY is not configured"
     };
   }
@@ -1752,6 +1811,27 @@ async function handleAllowanceBatch(body, env) {
       const type = result.failureType || result.status || "unknown";
       failureStats[type] = (failureStats[type] || 0) + 1;
 
+      const unresolvedIdentity = spenderIdentity(candidate.spender);
+      approvals.push({
+        standard: "ERC-20",
+        tokenAddress: candidate.tokenAddress,
+        tokenName: null,
+        tokenSymbol: null,
+        spender: candidate.spender,
+        ...unresolvedIdentity,
+        allowance: null,
+        rawCurrentAllowance: null,
+        tokenDecimals: null,
+        unlimited: null,
+        currentlyActive: null,
+        currentAllowanceStatus: "failed",
+        currentAllowanceFailure: type,
+        currentAllowanceMessage: String(result.message || "Current allowance could not be read").slice(0, 220),
+        lastSeenBlock: candidate.lastSeenBlock,
+        lastTransactionHash: candidate.lastTransactionHash,
+        discoverySource
+      });
+
       if (failureSamples.length < 5) {
         failureSamples.push({
           type,
@@ -1921,23 +2001,7 @@ async function handleScan(request, env) {
       )
     );
 
-    for (const [endpoint, standard] of [
-      ["token_approval_security", "ERC-20"],
-      ["nft721_approval_security", "ERC-721"],
-      ["nft1155_approval_security", "ERC-1155"]
-    ]) {
-      jobs.push(
-        runGoPlus(
-          endpoint,
-          `${GOPLUS_API}/api/v2/${endpoint}/${chainId}?addresses=${address}`,
-          data => {
-            const records = normalizeApprovals(data, standard);
-            approvals.push(...records);
-            approvalFinding(standard, records, findings);
-          }
-        )
-      );
-    }
+Base GoPlus endpoint skip
 
   } else {
     jobs.push(
@@ -2065,7 +2129,10 @@ async function handleScan(request, env) {
 
   const providerValues = Object.values(providers);
 
-  const successful = providerValues.filter(
+  const requiredProviderValues = providerValues.filter(
+    p => p.status !== "not_applicable"
+  );
+  const successful = requiredProviderValues.filter(
     p => p.status === "success"
   ).length;
 
@@ -2073,7 +2140,7 @@ async function handleScan(request, env) {
     providers.erc20_onchain_discovery?.incomplete === true;
 
   const overallStatus =
-    successful === providerValues.length &&
+    successful === requiredProviderValues.length &&
     successful > 0 &&
     !hasIncompleteDiscovery
       ? "complete"
@@ -2810,7 +2877,10 @@ export default {
             bscAnkrAdvancedLogs: true,
             bscRpcAllowanceReads: true,
             baseAnkrAdvancedLogs: true,
-            baseAnkrAllowanceReads: true
+            baseAnkrAllowanceReads: true,
+            separateAnkrChainRpcForEthCall: true,
+            unresolvedApprovalCandidatesVisible: true,
+            partialIndicatorScore: true
           },
           supportedChains: Object.keys(CHAINS)
         }),
