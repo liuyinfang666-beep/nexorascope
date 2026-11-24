@@ -1,4 +1,4 @@
-// Preview Worker deployment trigger: 2026-11-20
+// Preview Worker deployment trigger: 2026-11-24
 const CHAINS = {
   "1": { name: "Ethereum", chainId: "1" },
   "56": { name: "BNB Chain", chainId: "56" },
