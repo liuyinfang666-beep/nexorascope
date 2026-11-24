@@ -866,34 +866,110 @@ function decodeErc20Text(hex) {
   }
 }
 
-async function bscAdvancedCall(env, method, params) {
+
+function ankrBlockchainForChain(chainId) {
+  const id = String(chainId);
+  const chains = {
+    "56": "bsc",
+    "8453": "base"
+  };
+  return chains[id] || null;
+}
+
+async function ankrAdvancedCall(env, method, params) {
   const endpoint = String(env.BSC_RPC_URL || "").trim();
+
   if (!endpoint || !endpoint.includes("/multichain/")) {
-    throw Object.assign(new Error("BSC_RPC_URL must be the Ankr Advanced API HTTPS endpoint"), { status: "unavailable" });
+    throw Object.assign(
+      new Error("BSC_RPC_URL must contain the Ankr Advanced API Multichain endpoint"),
+      { status: "unavailable" }
+    );
   }
+
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params
+    }),
     signal: AbortSignal.timeout(20000)
   });
+
   let payload;
-  try { payload = await response.json(); }
-  catch { throw Object.assign(new Error("Ankr returned invalid JSON"), { status: "unavailable", httpStatus: response.status }); }
-  if (!response.ok || payload?.error) {
-    const message = payload?.error?.message || `Ankr HTTP ${response.status}`;
-    throw Object.assign(new Error(message), { status: classifyFailure(response.status, message), httpStatus: response.status });
+
+  try {
+    payload = await response.json();
+  } catch {
+    throw Object.assign(
+      new Error("Ankr returned invalid JSON"),
+      {
+        status: "unavailable",
+        httpStatus: response.status
+      }
+    );
   }
+
+  if (!response.ok || payload?.error) {
+    const message =
+      payload?.error?.message || `Ankr HTTP ${response.status}`;
+
+    throw Object.assign(
+      new Error(message),
+      {
+        status: classifyFailure(response.status, message),
+        httpStatus: response.status
+      }
+    );
+  }
+
   return payload?.result;
 }
 
-async function bscEthCall(env, to, data) {
-  const result = await bscAdvancedCall(env, "eth_call", [{ to, data }, "latest"]);
+async function ankrEthCall(env, chainId, to, data) {
+  const blockchain = ankrBlockchainForChain(chainId);
+
+  if (!blockchain) {
+    throw Object.assign(
+      new Error(`Ankr does not support chainId ${chainId} in this configuration`),
+      { status: "unavailable" }
+    );
+  }
+
+  const result = await ankrAdvancedCall(
+    env,
+    "eth_call",
+    [
+      {
+        blockchain,
+        to,
+        data
+      },
+      "latest"
+    ]
+  );
+
   if (typeof result !== "string" || !/^0x[0-9a-f]*$/i.test(result)) {
     throw new Error("Ankr returned an invalid eth_call result");
   }
+
   return result;
 }
+
+// Compatibility wrappers for existing BNB Chain-only endpoints.
+async function bscAdvancedCall(env, method, params) {
+  return ankrAdvancedCall(env, method, params);
+}
+
+async function bscEthCall(env, to, data) {
+  return ankrEthCall(env, "56", to, data);
+}
+
 
 async function readErc20Metadata(token, chainId, env) {
   const key = `${chainId}:${token.toLowerCase()}`;
