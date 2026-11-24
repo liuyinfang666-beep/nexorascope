@@ -2001,7 +2001,46 @@ async function handleScan(request, env) {
       )
     );
 
-Base GoPlus endpoint skip
+    const approvalEndpoints = chainId === "8453"
+      ? [["token_approval_security", "ERC-20"]]
+      : [
+          ["token_approval_security", "ERC-20"],
+          ["nft721_approval_security", "ERC-721"],
+          ["nft1155_approval_security", "ERC-1155"]
+        ];
+
+    if (chainId === "8453") {
+      for (const endpoint of ["nft721_approval_security", "nft1155_approval_security"]) {
+        providers[endpoint] = {
+          provider: "GoPlus",
+          status: "not_applicable",
+          httpStatus: null,
+          message: "GoPlus does not provide this NFT approval endpoint for Base; skipped by design.",
+          cache: "none"
+        };
+        addFinding(
+          findings,
+          `${endpoint} not applicable`,
+          "This GoPlus endpoint does not support Base. It was skipped and is not treated as a successful safety check.",
+          "neutral",
+          0
+        );
+      }
+    }
+
+    for (const [endpoint, standard] of approvalEndpoints) {
+      jobs.push(
+        runGoPlus(
+          endpoint,
+          `${GOPLUS_API}/api/v2/${endpoint}/${chainId}?addresses=${address}`,
+          data => {
+            const records = normalizeApprovals(data, standard);
+            approvals.push(...records);
+            approvalFinding(standard, records, findings);
+          }
+        )
+      );
+    }
 
   } else {
     jobs.push(
