@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NexoraScope · BNB NFT Operator 查询</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#0b1020;color:#e8edf8}
+body{max-width:900px;margin:0 auto;padding:28px 18px;line-height:1.6}main{background:#131b30;border:1px solid #263452;border-radius:18px;padding:22px}
+h1{font-size:23px;margin:0 0 8px}p,small{color:#aebbd2}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#0a1120;padding:14px;border-radius:10px;max-height:420px;overflow:auto}
+button{border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;margin:4px 8px 4px 0}#check{background:#76e0b0;color:#092018}#next{background:#34435f;color:white}
+.stat{background:#0d1528;border-radius:12px;padding:14px;margin:12px 0}.stat b{font-size:22px;display:block}
+</style></head><body><main>
+<h1>BNB Chain · NFT Operator 授权查询</h1>
+<p>检查目标钱包是否被其他钱包授予 ERC-721 / ERC-1155 的 ApprovalForAll 批量操作权限。当前状态通过 isApprovedForAll(owner, operator) 链上读取确认。</p>
+<div class="stat">目标 Operator 钱包<b id="address">0x2a7FA743178B83fAB841000d57144C7CB1DEd359</b></div>
+<p id="status">尚未查询。每次最多读取 1,000 条匹配日志；如有下一页，可手动继续。</p>
+<div class="stat">本页匹配 ApprovalForAll 事件<b id="matches">—</b></div>
+<div class="stat">当前有效批量授权<b id="active">—</b></div>
+<button id="check">查询第一页</button><button id="next" disabled>查询下一页</button>
+<h3>本页结果</h3><pre id="result">尚无结果</pre>
+<p><small>说明：事件记录不等于当前仍有授权。当前状态以合约 isApprovedForAll(owner, operator) 的返回值为准。本页最多检查 20 组 Token 合约 / Owner；若数量更多或存在下一页，请继续查询。失败或未支持该方法的合约不会被当作无授权。</small></p>
+</main><script>
+(()=>{const API="https://nexorascope-security-api-preview.liuyinfang666.workers.dev/api/bsc-nft-operator-approvals";
+const OPERATOR="0x2a7FA743178B83fAB841000d57144C7CB1DEd359";let token=null,busy=false;
+const $=id=>document.getElementById(id);$("address").textContent=OPERATOR;
+async function query(next){if(busy)return;busy=true;$("status").textContent="正在查询 BNB Chain…";$("check").disabled=true;$("next").disabled=true;
+try{const url=new URL(API);url.searchParams.set("address",OPERATOR);if(next&&token)url.searchParams.set("pageToken",token);
+const response=await fetch(url.toString(),{cache:"no-store"});const data=await response.json();if(!response.ok||data.status!=="success")throw new Error(data.message||"查询失败，HTTP "+response.status);
+token=data.nextPageToken||null;const checks=Array.isArray(data.allowanceChecks)?data.allowanceChecks:[];
+const active=checks.filter(x=>x.status==="success"&&x.active===true).length;
+$("matches").textContent=Number(data.matchedApprovalForAllEventCount||0).toLocaleString();
+$("active").textContent=active.toLocaleString()+" / "+checks.length;
+$("status").textContent=token?"本页完成；还有下一页，可继续查询。":"查询完成：Ankr 未返回下一页。";
+$("result").textContent=JSON.stringify(data,null,2);$("next").disabled=!token;
+}catch(e){$("status").textContent="查询失败："+String(e.message||e);$("result").textContent=String(e.stack||e);}
+finally{busy=false;$("check").disabled=false;}}
+$("check").addEventListener("click",()=>{token=null;query(false);});$("next").addEventListener("click",()=>query(true));})();
+</script></body></html>

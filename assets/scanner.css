@@ -1,0 +1,138 @@
+
+.scanner-hero{padding:56px 0 42px;background:radial-gradient(ellipse at 80% 10%,#194b78,transparent 38%),linear-gradient(125deg,#0a1728,#102842)}.scanner-hero h1{font-size:clamp(38px,6vw,58px);line-height:1.08;margin:12px 0}.scanner-hero h1 em{font-style:normal;color:var(--blue)}.scanner-section{padding:34px 0}.scanner-layout{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;align-items:start}.scan-form-panel label{display:block;font-weight:750;margin:15px 0 6px}.scan-form-panel .field{width:100%;display:block}.scan-tabs{display:flex;gap:8px;margin-bottom:18px}.scan-tab{border:1px solid #45627d;background:#0b1a2b;color:var(--ink);padding:10px 15px;border-radius:10px;cursor:pointer;font:inherit;font-weight:750}.scan-tab.active{background:var(--blue);color:#071524;border-color:var(--blue)}.scan-submit{width:100%;margin-top:18px}.scan-intro h2{margin-top:0}.scan-intro li{margin:10px 0;color:#c5d5e7}.scan-error{margin-top:14px;padding:12px;border:1px solid #a64e5b;background:#351c29;border-radius:10px;color:#ffdce1}.results-heading{display:flex;justify-content:space-between;align-items:center;gap:14px}.results-heading h2{margin:4px 0}.status-badge{border:1px solid #45627d;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:800}.status-badge.complete{border-color:#3b8a78;color:#8ce7d1}.status-badge.partial{border-color:#9b7a39;color:#f5d58a}.status-badge.unavailable{border-color:#a64e5b;color:#ffb8c1}.score-panel{display:grid;grid-template-columns:.7fr 1.3fr;gap:20px;align-items:center;margin:18px 0}.score-panel strong{display:block;font-size:42px;line-height:1.2;margin-top:5px}.score-note{color:#c5d5e7;margin:5px 0}.provider-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0 24px}.provider-card{border:1px solid var(--line);background:#0b1a2b;border-radius:12px;padding:14px;min-width:0}.provider-card strong{display:block}.provider-card p{font-size:13px;color:var(--muted);margin:5px 0 0;overflow-wrap:anywhere}.provider-state{display:inline-block;margin-top:7px;font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.06em}.provider-state.success{color:#8ce7d1}.provider-state.rate_limited,.provider-state.quota_exceeded{color:#f5d58a}.provider-state.auth_error,.provider-state.error,.provider-state.unavailable{color:#ffb8c1}.findings-list{display:grid;gap:10px}.finding{border:1px solid var(--line);background:#0b1a2b;border-radius:12px;padding:14px}.finding h4{margin:0 0 4px}.finding p{margin:0;color:#c5d5e7;font-size:14px;overflow-wrap:anywhere}.finding.bad{border-left:4px solid #d76c79}.finding.warn{border-left:4px solid #d9ad5b}.finding.good{border-left:4px solid #65bda8}.finding.neutral{border-left:4px solid #607d99}.approvals-block{margin-top:26px}.table-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px}.table-scroll table{border-collapse:collapse;width:100%;min-width:850px;font-size:13px}.table-scroll th,.table-scroll td{text-align:left;padding:11px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}.table-scroll th{background:#132b42;color:#d9e8f7}.table-scroll td{color:#c5d5e7}.report-disclaimer{margin-top:22px}#resultsSection{scroll-margin-top:88px}.hidden{display:none!important}@media(max-width:760px){.scanner-layout,.score-panel{grid-template-columns:1fr}.provider-grid{grid-template-columns:1fr}.results-heading{align-items:flex-start;flex-direction:column}}
+
+
+/* Report hierarchy */
+.score-highlight{background:linear-gradient(130deg,#103d46,#102b3d 62%,#142b45);border:1px solid #397b7c;box-shadow:0 14px 34px #020b1680;padding:26px}
+.score-highlight strong{font-size:clamp(42px,7vw,58px);color:#8ce7d1;letter-spacing:-.04em}
+.score-highlight #scoreDescription{max-width:520px}
+.report-group{border-radius:18px;padding:20px;margin:22px 0;border:1px solid var(--line)}
+.provider-group{background:linear-gradient(145deg,#142d48,#102238);border-color:#345b80}
+.findings-group{background:linear-gradient(145deg,#382d20,#211f25);border-color:#725b38}
+.approvals-block{background:linear-gradient(145deg,#103b3b,#102b36);border-color:#39756e}
+.report-group-heading{margin-bottom:14px}
+.report-group-heading h3{font-size:21px;margin:3px 0}
+.report-group-heading .fine{margin:3px 0}
+.group-kicker{font-size:10px;letter-spacing:.16em;font-weight:900;color:var(--teal)}
+.finding{background:#101e2c}
+.findings-group .finding{background:#29251f}
+.approvals-block .table-scroll{border-color:#39756e}
+.approvals-block .table-scroll th{background:#17413f}
+.scan-progress{margin-top:18px;padding:20px;border:1px solid #397b9a;border-radius:16px;background:linear-gradient(120deg,#102e49,#123d49);box-shadow:0 12px 30px #020b1660}
+.scan-progress-head{display:flex;align-items:center;gap:14px}
+.scan-progress-head strong{display:block;font-size:17px}
+.scan-progress-head p,.scan-progress-foot{margin:3px 0 0;color:#bfd3e5;font-size:13px}
+.scan-progress-track{height:7px;margin-top:16px;border-radius:99px;background:#25445c;overflow:hidden}
+.scan-progress-track span{display:block;width:38%;height:100%;border-radius:99px;background:linear-gradient(90deg,#78baff,#65ddc5);animation:scan-progress-move 1.35s ease-in-out infinite}
+.scan-spinner{width:25px;height:25px;flex:0 0 25px;border:3px solid #52758a;border-top-color:#8ce7d1;border-radius:50%;animation:scan-spin .8s linear infinite}
+@keyframes scan-spin{to{transform:rotate(360deg)}}
+@keyframes scan-progress-move{0%{transform:translateX(-110%)}100%{transform:translateX(290%)}}
+@media(prefers-reduced-motion:reduce){.scan-spinner,.scan-progress-track span{animation:none}}
+@media(max-width:760px){.report-group{padding:15px}.score-highlight{padding:20px}}
+
+
+/* Stronger report separation and modal scan progress */
+.score-highlight{background:linear-gradient(135deg,#063f48 0%,#102f52 55%,#171f45 100%);border:2px solid #55c9bd;box-shadow:0 16px 42px #0009,inset 0 1px #ffffff18}
+.score-highlight>div:first-child{padding:4px 0 4px 18px;border-left:5px solid #72e4d1}
+.score-highlight .fine:first-child{color:#a8fff0;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+.provider-group{background:linear-gradient(145deg,#102f58,#101f38);border:2px solid #5795d0;box-shadow:0 10px 28px #0005}
+.findings-group{background:linear-gradient(145deg,#49301b,#2c2024);border:2px solid #d39a4d;box-shadow:0 10px 28px #0005}
+.approvals-block{background:linear-gradient(145deg,#064a43,#102f3c);border:2px solid #4bc5a9;box-shadow:0 10px 28px #0005}
+.provider-card{background:#091a30;border-color:#4775a4}
+.findings-group .finding{background:#241d1b;border-color:#76563a}
+.approvals-block .table-scroll{border:1px solid #55bda7}
+.report-group-heading{padding-bottom:12px;border-bottom:1px solid #ffffff24}
+.scan-progress-modal{position:fixed;z-index:9999;inset:0;margin:0;padding:24px;display:flex;flex-direction:column;justify-content:center;width:min(520px,calc(100vw - 32px));height:max-content;max-height:calc(100vh - 40px);overflow:auto;top:50%;left:50%;transform:translate(-50%,-50%);border:2px solid #6bd9d0;border-radius:22px;background:linear-gradient(145deg,#102b49 0%,#123d4b 55%,#14264b 100%);box-shadow:0 30px 100px #000d,0 0 0 1px #ffffff20}
+.scan-progress-modal:not(.hidden)::before{content:"";position:fixed;z-index:-1;inset:calc((100vh - 100%)/-2) calc((100vw - 100%)/-2);background:#020817c9;backdrop-filter:blur(7px)}
+.scan-progress-modal .scan-progress-head strong{font-size:21px;color:#fff}
+.scan-progress-modal .scan-progress-head p{font-size:15px;line-height:1.6;color:#e1f0ff;margin-top:8px}
+.scan-progress-modal .scan-progress-track{height:10px;background:#294d68}
+.scan-progress-modal .scan-progress-foot{font-size:13px;color:#c6e1f2;margin-top:14px}
+.scan-modal-open{overflow:hidden}
+@media(max-width:600px){.scan-progress-modal{padding:20px;width:calc(100vw - 28px)}.score-highlight strong{font-size:48px}}
+
+
+/* Adaptive viewport sizing for the on-chain data scan dialog */
+.scan-progress-modal{
+  box-sizing:border-box;
+  width:min(520px, calc(100vw - 32px));
+  max-width:calc(100vw - 32px);
+  height:auto;
+  max-height:calc(100vh - 32px);
+  max-height:calc(100dvh - 32px);
+  padding:clamp(16px, 3.5vw, 28px);
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  overflow-wrap:anywhere;
+}
+.scan-progress-modal .scan-progress-head{
+  min-width:0;
+  align-items:flex-start;
+}
+.scan-progress-modal .scan-progress-head>div{
+  min-width:0;
+}
+.scan-progress-modal .scan-progress-head strong,
+.scan-progress-modal .scan-progress-head p,
+.scan-progress-modal .scan-progress-foot{
+  overflow-wrap:anywhere;
+  word-break:normal;
+}
+@media(max-width:600px){
+  .scan-progress-modal{
+    width:calc(100vw - 24px);
+    max-width:calc(100vw - 24px);
+    max-height:calc(100vh - 24px);
+    max-height:calc(100dvh - 24px);
+    padding:clamp(14px, 4vw, 20px);
+    border-radius:18px;
+  }
+  .scan-progress-modal .scan-progress-head strong{font-size:clamp(17px, 4.5vw, 21px)}
+  .scan-progress-modal .scan-progress-head p{font-size:clamp(13px, 3.6vw, 15px);line-height:1.5}
+  .scan-progress-modal .scan-progress-foot{font-size:12px;line-height:1.5}
+}
+@media(max-height:480px){
+  .scan-progress-modal{
+    max-height:calc(100vh - 16px);
+    max-height:calc(100dvh - 16px);
+    padding:14px 16px;
+    border-radius:16px;
+  }
+  .scan-progress-modal .scan-progress-track{margin-top:12px}
+  .scan-progress-modal .scan-progress-foot{margin-top:10px}
+}
+
+
+/* Keep the scan dialog adaptive while hiding the scrollbar chrome */
+.scan-progress-modal{
+  scrollbar-width:none;
+  -ms-overflow-style:none;
+}
+.scan-progress-modal::-webkit-scrollbar{
+  display:none;
+  width:0;
+  height:0;
+}
+@media(max-height:700px){
+  .scan-progress-modal{
+    padding:14px 18px;
+    gap:10px;
+  }
+  .scan-progress-modal .scan-progress-head strong{font-size:18px}
+  .scan-progress-modal .scan-progress-head p{font-size:13px;line-height:1.4;margin-top:5px}
+  .scan-progress-modal .scan-progress-track{margin-top:10px}
+  .scan-progress-modal .scan-progress-foot{font-size:11px;line-height:1.35;margin-top:8px}
+}
+@media(max-height:520px){
+  .scan-progress-modal{
+    padding:10px 14px;
+    border-radius:14px;
+  }
+  .scan-progress-modal .scan-progress-head{gap:10px}
+  .scan-progress-modal .scan-spinner{width:20px;height:20px;flex-basis:20px}
+  .scan-progress-modal .scan-progress-head strong{font-size:16px}
+  .scan-progress-modal .scan-progress-head p{font-size:12px;line-height:1.3}
+  .scan-progress-modal .scan-progress-track{height:7px;margin-top:8px}
+  .scan-progress-modal .scan-progress-foot{font-size:10px;line-height:1.3;margin-top:6px}
+}
