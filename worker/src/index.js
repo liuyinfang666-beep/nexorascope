@@ -297,7 +297,6 @@ async function cachedProviderGet(
       try {
         const requestHeaders = {
           accept: "application/json",
-          ...headers
         };
 
         if (provider === "goplus" && env.GOPLUS_TOKEN) {
@@ -598,7 +597,7 @@ function summarizeTokenRisk(data, findings) {
 
   if (token.is_open_source === "0" || token.is_open_source === 0) {
     addFinding(
-      findings,
+          findings,
       "Source verification",
       "The provider reports that source code is not open-source/verified.",
       "warn",
@@ -898,7 +897,65 @@ async function ankrAdvancedCall(env, method, params) {
       method,
       params
     }),
-    signal: AbortSignal.timeout(20000)
+    signal: AbortSignal.timeout(15000)
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || data?.error) {
+    const message =
+      data?.error?.message ||
+      data?.message ||
+      `Ankr HTTP ${response.status}`;
+
+    throw Object.assign(
+      new Error(message),
+      {
+        status: classifyFailure(response.status, message),
+        httpStatus: response.status
+      }
+    );
+  }
+
+  return data?.result;
+}
+
+async function ankrGetLogs(env, chainId, filter) {
+  const blockchain = ankrBlockchainForChain(chainId);
+
+  if (!blockchain) {
+    throw Object.assign(
+      new Error(`Ankr does not support chain ${chainId} in this configuration`),
+      { status: "unsupported" }
+    );
+  }
+
+  return await ankrAdvancedCall(env, "ankr_getLogs", [{
+    blockchain,
+    fromBlock: filter.fromBlock,
+    toBlock: filter.toBlock,
+    address: filter.address,
+    topics: filter.topics
+  }]);
+}
+
+async function ankrEthCall(env, chainId, to, data) {
+  const blockchain = ankrBlockchainForChain(chainId);
+
+  if (!blockchain) {
+    throw Object.assign(
+      new Error(`Ankr does not support chain ${chainId} in this configuration`),
+      { status: "unsupported" }
+    );
+  }
+
+  return await ankrAdvancedCall(env, "eth_call", [{
+    blockchain,
+    to,
+    data,
+    tag: "latest"
+  }]);
+}    signal: AbortSignal.timeout(20000)
   });
 
   let payload;
@@ -1197,8 +1254,7 @@ async function readErc20Allowance(token, owner, spender, chainId, env) {
             "Invalid decimals response"
           ).slice(0, 200);
         }
-      } catch (error) {
-        decimalsError = String(
+      } catch (error) {        decimalsError = String(
           error.message || "Decimals request failed"
         ).slice(0, 200);
       }
@@ -1497,8 +1553,7 @@ async function discoverErc20Approvals(owner, chainId, env) {
 
       if (
         topics.length < 3 ||
-        String(topics[1] || "").toLowerCase() !==
-          ownerTopic.toLowerCase() ||
+        String(topics[1] || "").toLowerCase() !==          ownerTopic.toLowerCase() ||
         !ADDRESS_RE.test(log.address || "")
       ) {
         continue;
@@ -1673,51 +1728,7 @@ async function handleApprovalLogBatch(body, env) {
 
 
 
-async function handleApprovalLogBatch(body, env) {
-  const owner = String(body?.address || "").trim();
-  const pageToken = String(body?.pageToken || "");
-  if (!ADDRESS_RE.test(owner) || !pageToken || pageToken.length > 4096) {
-    return json({ error: "Invalid wallet address or Ankr page token." }, 400);
-  }
-  try {
-    const ownerTopic = "0x" + owner.slice(2).toLowerCase().padStart(64, "0");
-    const result = await bscAdvancedCall(env, "ankr_getLogs", {
-      blockchain: ["bsc"],
-      fromBlock: "earliest",
-      toBlock: "latest",
-      topics: [[APPROVAL_TOPIC], [ownerTopic]],
-      pageSize: 10000,
-      pageToken,
-      descOrder: true
-    });
-    const logs = Array.isArray(result?.logs) ? result.logs : [];
-    const candidates = new Map();
-    for (const log of logs) {
-      const topics = log?.topics || [];
-      if (
-        topics.length < 3 ||
-        String(topics[1] || "").toLowerCase() !== ownerTopic ||
-        !ADDRESS_RE.test(log.address || "")
-      ) continue;
-      const spender = "0x" + String(topics[2]).slice(-40);
-      if (!ADDRESS_RE.test(spender)) continue;
-      const key = `${log.address.toLowerCase()}:${spender.toLowerCase()}`;
-      const previous = candidates.get(key);
-      if (!previous || blockNumberToBigInt(log.blockNumber) > blockNumberToBigInt(previous.lastSeenBlock)) {
-        candidates.set(key, { tokenAddress: log.address, spender, lastSeenBlock: log.blockNumber || "0x0", lastTransactionHash: log.transactionHash || null });
-      }
-    }
-    return json({
-      status: "success",
-      candidates: [...candidates.values()],
-      logCount: logs.length,
-      pageToken: result?.nextPageToken || null,
-      done: !result?.nextPageToken
-    });
-  } catch (error) {
-    return json({ status: error.status || "error", error: String(error.message || "Ankr log pagination failed").slice(0,300) }, 502);
-  }
-}
+
 
 
 async function handleAllowanceBatch(body, env) {
@@ -1842,7 +1853,7 @@ async function handleAllowanceBatch(body, env) {
       allowance: result.allowance,
       rawCurrentAllowance: result.rawAllowance,
       tokenDecimals: result.decimals,
-      unlimited,
+            unlimited,
       currentlyActive: true,
       currentAllowanceStatus: "success",
       currentAllowanceCheckedAt: result.checkedAt,
@@ -2054,7 +2065,7 @@ async function handleScan(request, env) {
     const discovery = await discoverErc20Approvals(address, chainId, env);
 
     providers.erc20_onchain_discovery = {
-      provider: chainId === "56" ? "Ankr Advanced API" : "Etherscan API V2",
+      provider: ankrBlockchainForChain(chainId) ? "Ankr Advanced API" : "Etherscan API V2",
       status: discovery.status === "success"
         ? (discovery.candidateCount > 0 ? "pending" : "success")
         : discovery.status,
@@ -2075,7 +2086,7 @@ async function handleScan(request, env) {
     };
 
     if (discovery.status === "success") {
-      sources.push(chainId === "56" ? "Ankr Advanced API on-chain ERC-20 approval discovery" : "Etherscan on-chain ERC-20 approval discovery");
+      sources.push(ankrBlockchainForChain(chainId) ? "Ankr Advanced API on-chain ERC-20 approval discovery" : "Etherscan on-chain ERC-20 approval discovery");
       scanSession = {
         candidates: discovery.candidates,
         candidateCount: discovery.candidateCount,
@@ -2142,7 +2153,7 @@ async function handleScan(request, env) {
     approvals,
     providers,
     scanSession,
-    sources: [...new Set(sources)],
+        sources: [...new Set(sources)],
     disclaimer:
       "Automated indicators only; not an audit or guarantee. Missing provider data, incomplete historical logs, and failed allowance calls must not be interpreted as proof of safety or absence of approvals."
   });
@@ -2442,7 +2453,7 @@ export default {
           const spender = "0x" + String(topics[2] || "").slice(-40);
           const token = String(log?.address || "").toLowerCase();
           if (!ADDRESS_RE.test(spender) || !ADDRESS_RE.test(token)) continue;
-          pairs.set(token + ":" + spender.toLowerCase(), { token, spender });
+                    pairs.set(token + ":" + spender.toLowerCase(), { token, spender });
         }
         const allowanceChecks = [];
         for (const pair of Array.from(pairs.values()).slice(0, 20)) {
@@ -2844,7 +2855,7 @@ export default {
         json({
           status: "ok",
           service: "nexorascope-security-api",
-          apiVersion: 6,
+          apiVersion: 7,
           features: {
             batchedErc20AllowanceChecks: true,
             allowanceBatchSize: 3,
@@ -2852,7 +2863,9 @@ export default {
             erc20TokenMetadata: true,
             knownSpenderLabels: true,
             bscAnkrAdvancedLogs: true,
-            bscRpcAllowanceReads: true
+            bscRpcAllowanceReads: true,
+            baseAnkrAdvancedLogs: true,
+            baseAnkrAllowanceReads: true
           },
           supportedChains: Object.keys(CHAINS)
         }),
