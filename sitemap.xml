@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://nexorascope.xyz/</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://nexorascope.xyz/about.html</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://nexorascope.xyz/wallet-security.html</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://nexorascope.xyz/token-approval.html</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://nexorascope.xyz/crypto-scams.html</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://nexorascope.xyz/privacy.html</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://nexorascope.xyz/contact.html</loc><lastmod>2026-11-17</lastmod></url>
-  <url><loc>https://nexorascope.xyz/scanner.html</loc></url>
+  <url><loc>https://nexorascope.xyz/</loc></url>
+  <url><loc>https://nexorascope.xyz/about</loc></url>
+  <url><loc>https://nexorascope.xyz/wallet-security</loc></url>
+  <url><loc>https://nexorascope.xyz/token-approval</loc></url>
+  <url><loc>https://nexorascope.xyz/crypto-scams</loc></url>
+  <url><loc>https://nexorascope.xyz/privacy</loc></url>
+  <url><loc>https://nexorascope.xyz/contact</loc></url>
+  <url><loc>https://nexorascope.xyz/scanner</loc></url>
 </urlset>
