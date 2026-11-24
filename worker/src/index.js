@@ -297,6 +297,7 @@ async function cachedProviderGet(
       try {
         const requestHeaders = {
           accept: "application/json",
+          ...headers
         };
 
         if (provider === "goplus" && env.GOPLUS_TOKEN) {
@@ -597,7 +598,7 @@ function summarizeTokenRisk(data, findings) {
 
   if (token.is_open_source === "0" || token.is_open_source === 0) {
     addFinding(
-          findings,
+      findings,
       "Source verification",
       "The provider reports that source code is not open-source/verified.",
       "warn",
@@ -897,65 +898,7 @@ async function ankrAdvancedCall(env, method, params) {
       method,
       params
     }),
-    signal: AbortSignal.timeout(15000)
-  });
-
-  const data = await response.json();
-
-  if (!response.ok || data?.error) {
-    const message =
-      data?.error?.message ||
-      data?.message ||
-      `Ankr HTTP ${response.status}`;
-
-    throw Object.assign(
-      new Error(message),
-      {
-        status: classifyFailure(response.status, message),
-        httpStatus: response.status
-      }
-    );
-  }
-
-  return data?.result;
-}
-
-async function ankrGetLogs(env, chainId, filter) {
-  const blockchain = ankrBlockchainForChain(chainId);
-
-  if (!blockchain) {
-    throw Object.assign(
-      new Error(`Ankr does not support chain ${chainId} in this configuration`),
-      { status: "unsupported" }
-    );
-  }
-
-  return await ankrAdvancedCall(env, "ankr_getLogs", [{
-    blockchain,
-    fromBlock: filter.fromBlock,
-    toBlock: filter.toBlock,
-    address: filter.address,
-    topics: filter.topics
-  }]);
-}
-
-async function ankrEthCall(env, chainId, to, data) {
-  const blockchain = ankrBlockchainForChain(chainId);
-
-  if (!blockchain) {
-    throw Object.assign(
-      new Error(`Ankr does not support chain ${chainId} in this configuration`),
-      { status: "unsupported" }
-    );
-  }
-
-  return await ankrAdvancedCall(env, "eth_call", [{
-    blockchain,
-    to,
-    data,
-    tag: "latest"
-  }]);
-}    signal: AbortSignal.timeout(20000)
+    signal: AbortSignal.timeout(20000)
   });
 
   let payload;
@@ -1254,7 +1197,8 @@ async function readErc20Allowance(token, owner, spender, chainId, env) {
             "Invalid decimals response"
           ).slice(0, 200);
         }
-      } catch (error) {        decimalsError = String(
+      } catch (error) {
+        decimalsError = String(
           error.message || "Decimals request failed"
         ).slice(0, 200);
       }
@@ -1553,7 +1497,8 @@ async function discoverErc20Approvals(owner, chainId, env) {
 
       if (
         topics.length < 3 ||
-        String(topics[1] || "").toLowerCase() !==          ownerTopic.toLowerCase() ||
+        String(topics[1] || "").toLowerCase() !==
+          ownerTopic.toLowerCase() ||
         !ADDRESS_RE.test(log.address || "")
       ) {
         continue;
@@ -1853,7 +1798,7 @@ async function handleAllowanceBatch(body, env) {
       allowance: result.allowance,
       rawCurrentAllowance: result.rawAllowance,
       tokenDecimals: result.decimals,
-            unlimited,
+      unlimited,
       currentlyActive: true,
       currentAllowanceStatus: "success",
       currentAllowanceCheckedAt: result.checkedAt,
@@ -2153,7 +2098,7 @@ async function handleScan(request, env) {
     approvals,
     providers,
     scanSession,
-        sources: [...new Set(sources)],
+    sources: [...new Set(sources)],
     disclaimer:
       "Automated indicators only; not an audit or guarantee. Missing provider data, incomplete historical logs, and failed allowance calls must not be interpreted as proof of safety or absence of approvals."
   });
@@ -2453,7 +2398,7 @@ export default {
           const spender = "0x" + String(topics[2] || "").slice(-40);
           const token = String(log?.address || "").toLowerCase();
           if (!ADDRESS_RE.test(spender) || !ADDRESS_RE.test(token)) continue;
-                    pairs.set(token + ":" + spender.toLowerCase(), { token, spender });
+          pairs.set(token + ":" + spender.toLowerCase(), { token, spender });
         }
         const allowanceChecks = [];
         for (const pair of Array.from(pairs.values()).slice(0, 20)) {
