@@ -85,7 +85,20 @@
     const block = document.getElementById("approvalsBlock");
     block.classList.toggle("hidden", data.mode !== "wallet");
     document.getElementById("approvalsBody").innerHTML = approvals.length
-      ? approvals.map(a => `<tr><td>${escapeHtml(a.standard)}</td><td>${escapeHtml(a.tokenName || a.tokenSymbol || a.token || a.symbol || "Unknown token")}${a.tokenSymbol && a.tokenName ? ` (${escapeHtml(a.tokenSymbol)})` : ""}</td><td>${escapeHtml(a.tokenAddress || "—")}</td><td>${escapeHtml(a.spenderName || "Unknown spender")}<br><small>${escapeHtml(a.spender || "—")}</small></td><td>${escapeHtml(a.allowance || (a.rawCurrentAllowance ? "Raw value only (decimals unavailable)" : "—"))}</td><td>${escapeHtml(a.tokenId || "—")}</td><td>${a.currentAllowanceStatus === "failed" ? `Current allowance unverified: ${escapeHtml(a.currentAllowanceMessage || a.currentAllowanceFailure || "RPC check failed")}` : (a.risky ? "Provider flagged" : (a.rawRisk ? escapeHtml(a.rawRisk) : (a.formattingComplete === false ? "Active; amount formatting incomplete" : (a.spenderIdentity === "unknown" ? "Unknown spender; review required" : "No provider risk flag returned")))}</td></tr>`).join("")
+      ? approvals.map(a => {
+          const reviewText = a.currentAllowanceStatus === "failed"
+            ? `Current allowance unverified: ${escapeHtml(a.currentAllowanceMessage || a.currentAllowanceFailure || "RPC check failed")}`
+            : a.risky
+              ? "Provider flagged"
+              : a.rawRisk
+                ? escapeHtml(a.rawRisk)
+                : a.formattingComplete === false
+                  ? "Active; amount formatting incomplete"
+                  : a.spenderIdentity === "unknown"
+                    ? "Unknown spender; review required"
+                    : "No provider risk flag returned";
+          return `<tr><td>${escapeHtml(a.standard)}</td><td>${escapeHtml(a.tokenName || a.tokenSymbol || a.token || a.symbol || "Unknown token")}${a.tokenSymbol && a.tokenName ? ` (${escapeHtml(a.tokenSymbol)})` : ""}</td><td>${escapeHtml(a.tokenAddress || "—")}</td><td>${escapeHtml(a.spenderName || "Unknown spender")}<br><small>${escapeHtml(a.spender || "—")}</small></td><td>${escapeHtml(a.allowance || (a.rawCurrentAllowance ? "Raw value only (decimals unavailable)" : "—"))}</td><td>${escapeHtml(a.tokenId || "—")}</td><td>${reviewText}</td></tr>`;
+        }).join("")
       : `<tr><td colspan="7">No parseable approval detail was returned. This does not prove that no approvals exist.</td></tr>`;
 
     document.getElementById("disclaimer").textContent =
