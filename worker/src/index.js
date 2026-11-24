@@ -1575,25 +1575,22 @@ async function discoverErc20Approvals(owner, chainId, env) {
   }
 }
 
+
 async function handleApprovalLogBatch(body, env) {
   const chainId = String(body?.chainId || "");
   const blockchain = ankrBlockchainForChain(chainId);
   const owner = String(body?.address || "").trim();
   const pageToken = String(body?.pageToken || "");
 
-  if (!blockchain) {
-    return json({ error: "Unsupported Ankr chain for approval pagination." }, 400);
-  }
-
   if (
+    !blockchain ||
     !ADDRESS_RE.test(owner) ||
     !pageToken ||
     pageToken.length > 4096
   ) {
-    return json(
-      { error: "Invalid wallet address or Ankr page token." },
-      400
-    );
+    return json({
+      error: "Invalid chain, wallet address or Ankr page token."
+    }, 400);
   }
 
   try {
@@ -1614,10 +1611,7 @@ async function handleApprovalLogBatch(body, env) {
       }
     );
 
-    const logs = Array.isArray(result?.logs)
-      ? result.logs
-      : [];
-
+    const logs = Array.isArray(result?.logs) ? result.logs : [];
     const candidates = new Map();
 
     for (const log of logs) {
@@ -1625,14 +1619,14 @@ async function handleApprovalLogBatch(body, env) {
 
       if (
         topics.length < 3 ||
-        String(topics[1] || "").toLowerCase() !==
-          ownerTopic.toLowerCase() ||
+        String(topics[1] || "").toLowerCase() !== ownerTopic ||
         !ADDRESS_RE.test(log.address || "")
       ) {
         continue;
       }
 
       const spender = "0x" + String(topics[2]).slice(-40);
+
       if (!ADDRESS_RE.test(spender)) continue;
 
       const key =
@@ -1657,23 +1651,23 @@ async function handleApprovalLogBatch(body, env) {
     return json({
       status: "success",
       chainId,
+      blockchain,
       candidates: [...candidates.values()],
       logCount: logs.length,
       pageToken: result?.nextPageToken || null,
       done: !result?.nextPageToken
     });
+
   } catch (error) {
-    return json(
-      {
-        status: error.status || "error",
-        error: String(
-          error.message || "Ankr log pagination failed"
-        ).slice(0, 300)
-      },
-      502
-    );
+    return json({
+      status: error.status || "error",
+      error: String(
+        error.message || "Ankr log pagination failed"
+      ).slice(0, 300)
+    }, 502);
   }
 }
+
 
 
 
@@ -1725,6 +1719,7 @@ async function handleApprovalLogBatch(body, env) {
   }
 }
 
+
 async function handleAllowanceBatch(body, env) {
   const chainId = String(body?.chainId || "");
   const owner = String(body?.address || "").trim();
@@ -1734,9 +1729,11 @@ async function handleAllowanceBatch(body, env) {
   if (!CHAINS[chainId] || !ADDRESS_RE.test(owner)) {
     return json({ error: "Invalid chain or wallet address for allowance batch." }, 400);
   }
+
   if (!Array.isArray(candidates) || candidates.length > 150) {
     return json({ error: "Invalid candidate list." }, 400);
   }
+
   if (!Number.isInteger(cursor) || cursor < 0 || cursor > candidates.length) {
     return json({ error: "Invalid allowance batch cursor." }, 400);
   }
@@ -1746,9 +1743,15 @@ async function handleAllowanceBatch(body, env) {
   const approvals = [];
   const failureStats = {};
   const failureSamples = [];
+
   let checkedCount = 0;
   let failedCount = 0;
   let formattingIncompleteCount = 0;
+
+  const discoverySource =
+    ankrBlockchainForChain(chainId)
+      ? "Ankr Advanced API Approval logs"
+      : "Etherscan Approval logs";
 
   for (const candidate of slice) {
     if (
@@ -1756,17 +1759,21 @@ async function handleAllowanceBatch(body, env) {
       !ADDRESS_RE.test(String(candidate?.spender || ""))
     ) {
       failedCount++;
-      failureStats.invalid_candidate = (failureStats.invalid_candidate || 0) + 1;
+      failureStats.invalid_candidate =
+        (failureStats.invalid_candidate || 0) + 1;
+
       if (failureSamples.length < 5) {
         failureSamples.push({
           type: "invalid_candidate",
           message: "Candidate token or spender address is invalid"
         });
       }
+
       continue;
     }
 
     let result;
+
     try {
       result = await readErc20Allowance(
         candidate.tokenAddress,
@@ -1785,8 +1792,10 @@ async function handleAllowanceBatch(body, env) {
 
     if (result.status !== "success") {
       failedCount++;
+
       const type = result.failureType || result.status || "unknown";
       failureStats[type] = (failureStats[type] || 0) + 1;
+
       if (failureSamples.length < 5) {
         failureSamples.push({
           type,
@@ -1797,20 +1806,31 @@ async function handleAllowanceBatch(body, env) {
           spender: candidate.spender
         });
       }
+
       continue;
     }
 
     checkedCount++;
-    if (result.decimalsError) formattingIncompleteCount++;
+
+    if (result.decimalsError) {
+      formattingIncompleteCount++;
+    }
+
     if (!result.active) continue;
 
     const raw = BigInt(result.rawAllowance);
     const maxUint256 = (1n << 256n) - 1n;
+
     const unlimited =
       raw > 0n &&
       raw * 100000000n >= maxUint256 * 99999999n;
 
-    const tokenMetadata = result.metadata || { name: null, symbol: null, metadataStatus: "unavailable" };
+    const tokenMetadata = result.metadata || {
+      name: null,
+      symbol: null,
+      metadataStatus: "unavailable"
+    };
+
     approvals.push({
       standard: "ERC-20",
       tokenAddress: candidate.tokenAddress,
@@ -1828,13 +1848,14 @@ async function handleAllowanceBatch(body, env) {
       currentAllowanceCheckedAt: result.checkedAt,
       decimalsError: result.decimalsError || null,
       formattingComplete: result.decimals !== null,
-      discoverySource: String(chainId) === "56" ? "Ankr Advanced API Approval logs" : "Etherscan Approval logs",
+      discoverySource,
       lastSeenBlock: candidate.lastSeenBlock,
       lastTransactionHash: candidate.lastTransactionHash
     });
   }
 
   const nextCursor = cursor + slice.length;
+
   return json({
     status: "success",
     approvals,
@@ -1849,6 +1870,7 @@ async function handleAllowanceBatch(body, env) {
     done: nextCursor >= candidates.length
   });
 }
+
 
 async function handleScan(request, env) {
   if (request.method !== "POST") {
