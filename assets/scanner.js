@@ -186,168 +186,246 @@
     // Final score is assigned after provider and discovery completeness are known.
   }
 
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
-    errorBox.classList.add("hidden");
-    const address = addressInput.value.trim();
+  
+form.addEventListener("submit", async event => {
+  event.preventDefault();
+  errorBox.classList.add("hidden");
+  const address = addressInput.value.trim();
 
-    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
-      errorBox.textContent = "Enter a valid 0x address containing exactly 40 hexadecimal characters.";
-      errorBox.classList.remove("hidden");
-      addressInput.focus();
-      return;
-    }
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+    errorBox.textContent = "Enter a valid 0x address containing exactly 40 hexadecimal characters.";
+    errorBox.classList.remove("hidden");
+    addressInput.focus();
+    return;
+  }
 
-    scanButton.disabled = true;
-    scanButton.textContent = "Scanning…";
-    setProgress("Starting security scan…", "Contacting the configured providers and collecting security indicators.");
-    // The progress dialog is fixed above the page; no scrolling is needed.
+  scanButton.disabled = true;
+  scanButton.textContent = "Scanning…";
+  setProgress("Starting security scan…", "Contacting the configured providers and collecting security indicators.");
 
-    try {
-      const data = await postJson({mode,chainId:chainInput.value,address});
+  try {
+    const data = await postJson({mode,chainId:chainInput.value,address});
 
-      if (mode === "wallet" && data.scanSession &&
-          Array.isArray(data.scanSession.candidates)) {
-        const session = data.scanSession;
-        const stats = {
-          checkedCount:0,
-          failedCount:0,
-          formattingIncompleteCount:0,
-          failureStats:{},
-          failureSamples:[],
-          logLimitReached:!!session.logLimitReached,
-          candidateLimitReached:!!session.candidateLimitReached
-        };
-        const combined = [];
-        let cursor = 0;
+    if (mode === "wallet" && data.scanSession &&
+        Array.isArray(data.scanSession.candidates)) {
+      const session = data.scanSession;
+      const stats = {
+        checkedCount:0,
+        failedCount:0,
+        formattingIncompleteCount:0,
+        failureStats:{},
+        failureSamples:[],
+        logLimitReached:!!session.logLimitReached,
+        candidateLimitReached:!!session.candidateLimitReached
+      };
+      const combined = [];
+      let cursor = 0;
 
-        if (chainInput.value === "56" && session.pageToken) {
-          const unique = new Map();
-          const addCandidates = rows => {
-            for (const candidate of rows || []) {
-              const key = `${String(candidate.tokenAddress || "").toLowerCase()}:${String(candidate.spender || "").toLowerCase()}`;
-              const previous = unique.get(key);
-              if (!previous || BigInt(candidate.lastSeenBlock || 0) > BigInt(previous.lastSeenBlock || 0)) unique.set(key, candidate);
-            }
-          };
-          addCandidates(session.candidates);
-          let pageToken = session.pageToken;
-          let pageNumber = 1;
-          while (pageToken) {
-            scanButton.textContent = `Loading approval data… page ${pageNumber}`;
-            setProgress("Discovering BNB Chain approval events", `Loading historical approval records — page ${pageNumber}. This can take some time.`);
-            const page = await postJson({
-              phase:"approval_log_batch",
-              chainId:chainInput.value,
-              address,
-              pageToken
-            });
-            addCandidates(page.candidates);
-            pageToken = page.pageToken || null;
-            pageNumber++;
-            if (pageNumber > 100) {
-              stats.logLimitReached = true;
-              break;
+      const chainId = String(chainInput.value);
+      const supportsAnkrPagination =
+        chainId === "56" || chainId === "8453";
+
+      if (supportsAnkrPagination && session.pageToken) {
+        const unique = new Map();
+
+        const addCandidates = rows => {
+          for (const candidate of rows || []) {
+            const key =
+              `${String(candidate.tokenAddress || "").toLowerCase()}:${String(candidate.spender || "").toLowerCase()}`;
+            const previous = unique.get(key);
+
+            if (
+              !previous ||
+              BigInt(candidate.lastSeenBlock || 0) >
+                BigInt(previous.lastSeenBlock || 0)
+            ) {
+              unique.set(key, candidate);
             }
           }
-          session.candidates = [...unique.values()]
-            .sort((a,b) => BigInt(a.lastSeenBlock || 0) > BigInt(b.lastSeenBlock || 0) ? -1 : 1)
-            .slice(0,150);
-          stats.candidateLimitReached = unique.size > 150;
-          stats.logLimitReached = !!pageToken;
-        }
+        };
 
-        while (cursor < session.candidates.length) {
+        addCandidates(session.candidates);
+
+        let pageToken = session.pageToken;
+        let pageNumber = 1;
+
+        const chainName =
+          chainId === "8453" ? "Base" : "BNB Chain";
+
+        while (pageToken) {
           scanButton.textContent =
-            `Checking approvals… ${Math.min(cursor + session.batchSize, session.candidates.length)}/${session.candidates.length}`;
-          setProgress("Verifying current token permissions", `Checking ${Math.min(cursor + session.batchSize, session.candidates.length)} of ${session.candidates.length} discovered approval candidates.`);
+            `Loading approval data… page ${pageNumber}`;
 
-          const batch = await postJson({
-            phase:"allowance_batch",
-            chainId:chainInput.value,
+          setProgress(
+            `Discovering ${chainName} approval events`,
+            `Loading historical approval records — page ${pageNumber}. This can take some time.`
+          );
+
+          const page = await postJson({
+            phase:"approval_log_batch",
+            chainId,
             address,
-            candidates:session.candidates,
-            cursor
+            pageToken
           });
 
-          combined.push(...(Array.isArray(batch.approvals) ? batch.approvals : []));
-          stats.checkedCount += Number(batch.checkedCount || 0);
-          stats.failedCount += Number(batch.failedCount || 0);
-          stats.formattingIncompleteCount += Number(batch.formattingIncompleteCount || 0);
+          addCandidates(page.candidates);
+          pageToken = page.pageToken || null;
+          pageNumber++;
 
-          for (const [key,value] of Object.entries(batch.failureStats || {})) {
-            stats.failureStats[key] = (stats.failureStats[key] || 0) + Number(value || 0);
-          }
-          for (const sample of batch.failureSamples || []) {
-            if (stats.failureSamples.length < 12) stats.failureSamples.push(sample);
-          }
-
-          if (!Number.isInteger(batch.nextCursor) || batch.nextCursor <= cursor) {
-            throw new Error("Allowance batch did not advance. Please restart the scan.");
-          }
-          cursor = batch.nextCursor;
-        }
-
-        const mergedApprovals = Array.isArray(data.approvals) ? [...data.approvals] : [];
-        const seenApprovalKeys = new Set(mergedApprovals.map(item =>
-          `${String(item.tokenAddress || "").toLowerCase()}:${String(item.spender || "").toLowerCase()}`
-        ));
-        for (const item of combined) {
-          const key = `${String(item.tokenAddress || "").toLowerCase()}:${String(item.spender || "").toLowerCase()}`;
-          if (!seenApprovalKeys.has(key)) {
-            mergedApprovals.push(item);
-            seenApprovalKeys.add(key);
+          if (pageNumber > 100) {
+            stats.logLimitReached = true;
+            break;
           }
         }
-        data.approvals = mergedApprovals;
 
-        if (combined.length > 0) {
-          data.findings = (data.findings || []).filter(f => f.title !== "ERC-20 approval data");
-        }
+        session.candidates = [...unique.values()]
+          .sort((a,b) =>
+            BigInt(a.lastSeenBlock || 0) >
+            BigInt(b.lastSeenBlock || 0) ? -1 : 1
+          )
+          .slice(0,150);
 
-        const provider = data.providers.erc20_onchain_discovery;
-        provider.checkedCount = stats.checkedCount;
-        provider.logLimitReached = stats.logLimitReached;
-        provider.candidateLimitReached = stats.candidateLimitReached;
-        provider.failedCount = stats.failedCount;
-        provider.formattingIncompleteCount = stats.formattingIncompleteCount;
-        provider.failureStats = stats.failureStats;
-        provider.failureSamples = stats.failureSamples;
-        provider.status =
-          stats.failedCount || stats.formattingIncompleteCount ||
-          stats.logLimitReached || stats.candidateLimitReached
-            ? "partial"
-            : "success";
-        provider.incomplete = provider.status !== "success";
-        provider.message = provider.incomplete
-          ? "Allowance verification finished with incomplete or failed checks."
-          : "Approval event discovery and current allowance checks completed.";
-
-        if (provider.status === "success") {
-          const originalProviders = Object.values(data.providers);
-          const allOk = originalProviders.every(p =>
-            p === provider || p.status === "success"
-          );
-          data.overallStatus = allOk ? "complete" : "partial";
-        } else {
-          data.overallStatus = "partial";
-        }
-
-        addDiscoveryFindings(data, stats);
+        stats.candidateLimitReached = unique.size > 150;
+        stats.logLimitReached = !!pageToken;
       }
 
-      setProgress("Preparing your scan report…", "Organizing provider responses, findings and permission details.");
-      calculateIndicatorScore(data);
-      renderReport(data);
-      hideProgress();
-    } catch (error) {
-      errorBox.textContent =
-        `${error.message || "Unable to reach the scan service."} If a batch failed, restart the scan; do not treat partial data as a complete result.`;
-      errorBox.classList.remove("hidden");
-      hideProgress();
-    } finally {
-      scanButton.disabled = false;
-      scanButton.textContent = mode === "wallet" ? "Run wallet scan" : "Run contract scan";
+      while (cursor < session.candidates.length) {
+        scanButton.textContent =
+          `Checking approvals… ${Math.min(cursor + session.batchSize, session.candidates.length)}/${session.candidates.length}`;
+
+        setProgress(
+          "Verifying current token permissions",
+          `Checking ${Math.min(cursor + session.batchSize, session.candidates.length)} of ${session.candidates.length} discovered approval candidates.`
+        );
+
+        const batch = await postJson({
+          phase:"allowance_batch",
+          chainId:chainInput.value,
+          address,
+          candidates:session.candidates,
+          cursor
+        });
+
+        combined.push(
+          ...(Array.isArray(batch.approvals) ? batch.approvals : [])
+        );
+
+        stats.checkedCount += Number(batch.checkedCount || 0);
+        stats.failedCount += Number(batch.failedCount || 0);
+        stats.formattingIncompleteCount +=
+          Number(batch.formattingIncompleteCount || 0);
+
+        for (const [key,value] of Object.entries(batch.failureStats || {})) {
+          stats.failureStats[key] =
+            (stats.failureStats[key] || 0) + Number(value || 0);
+        }
+
+        for (const sample of batch.failureSamples || []) {
+          if (stats.failureSamples.length < 12) {
+            stats.failureSamples.push(sample);
+          }
+        }
+
+        if (
+          !Number.isInteger(batch.nextCursor) ||
+          batch.nextCursor <= cursor
+        ) {
+          throw new Error(
+            "Allowance batch did not advance. Please restart the scan."
+          );
+        }
+
+        cursor = batch.nextCursor;
+      }
+
+      const mergedApprovals =
+        Array.isArray(data.approvals) ? [...data.approvals] : [];
+
+      const seenApprovalKeys = new Set(
+        mergedApprovals.map(item =>
+          `${String(item.tokenAddress || "").toLowerCase()}:${String(item.spender || "").toLowerCase()}`
+        )
+      );
+
+      for (const item of combined) {
+        const key =
+          `${String(item.tokenAddress || "").toLowerCase()}:${String(item.spender || "").toLowerCase()}`;
+
+        if (!seenApprovalKeys.has(key)) {
+          mergedApprovals.push(item);
+          seenApprovalKeys.add(key);
+        }
+      }
+
+      data.approvals = mergedApprovals;
+
+      if (combined.length > 0) {
+        data.findings = (data.findings || []).filter(
+          f => f.title !== "ERC-20 approval data"
+        );
+      }
+
+      const provider = data.providers.erc20_onchain_discovery;
+
+      provider.checkedCount = stats.checkedCount;
+      provider.logLimitReached = stats.logLimitReached;
+      provider.candidateLimitReached = stats.candidateLimitReached;
+      provider.failedCount = stats.failedCount;
+      provider.formattingIncompleteCount =
+        stats.formattingIncompleteCount;
+      provider.failureStats = stats.failureStats;
+      provider.failureSamples = stats.failureSamples;
+
+      provider.status =
+        stats.failedCount ||
+        stats.formattingIncompleteCount ||
+        stats.logLimitReached ||
+        stats.candidateLimitReached
+          ? "partial"
+          : "success";
+
+      provider.incomplete = provider.status !== "success";
+
+      provider.message = provider.incomplete
+        ? "Allowance verification finished with incomplete or failed checks."
+        : "Approval event discovery and current allowance checks completed.";
+
+      if (provider.status === "success") {
+        const originalProviders = Object.values(data.providers);
+
+        const allOk = originalProviders.every(p =>
+          p === provider || p.status === "success"
+        );
+
+        data.overallStatus = allOk ? "complete" : "partial";
+      } else {
+        data.overallStatus = "partial";
+      }
+
+      addDiscoveryFindings(data, stats);
     }
-  });
+
+    setProgress(
+      "Preparing your scan report…",
+      "Organizing provider responses, findings and permission details."
+    );
+
+    calculateIndicatorScore(data);
+    renderReport(data);
+    hideProgress();
+
+  } catch (error) {
+    errorBox.textContent =
+      `${error.message || "Unable to reach the scan service."} If a batch failed, restart the scan; do not treat partial data as a complete result.`;
+
+    errorBox.classList.remove("hidden");
+    hideProgress();
+
+  } finally {
+    scanButton.disabled = false;
+    scanButton.textContent =
+      mode === "wallet" ? "Run wallet scan" : "Run contract scan";
+  }
+});
+
 })();
