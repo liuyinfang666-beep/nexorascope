@@ -50,3 +50,55 @@
 .scan-progress-modal .scan-progress-foot{font-size:13px;color:#c6e1f2;margin-top:14px}
 .scan-modal-open{overflow:hidden}
 @media(max-width:600px){.scan-progress-modal{padding:20px;width:calc(100vw - 28px)}.score-highlight strong{font-size:48px}}
+
+
+/* Adaptive viewport sizing for the on-chain data scan dialog */
+.scan-progress-modal{
+  box-sizing:border-box;
+  width:min(520px, calc(100vw - 32px));
+  max-width:calc(100vw - 32px);
+  height:auto;
+  max-height:calc(100vh - 32px);
+  max-height:calc(100dvh - 32px);
+  padding:clamp(16px, 3.5vw, 28px);
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  overflow-wrap:anywhere;
+}
+.scan-progress-modal .scan-progress-head{
+  min-width:0;
+  align-items:flex-start;
+}
+.scan-progress-modal .scan-progress-head>div{
+  min-width:0;
+}
+.scan-progress-modal .scan-progress-head strong,
+.scan-progress-modal .scan-progress-head p,
+.scan-progress-modal .scan-progress-foot{
+  overflow-wrap:anywhere;
+  word-break:normal;
+}
+@media(max-width:600px){
+  .scan-progress-modal{
+    width:calc(100vw - 24px);
+    max-width:calc(100vw - 24px);
+    max-height:calc(100vh - 24px);
+    max-height:calc(100dvh - 24px);
+    padding:clamp(14px, 4vw, 20px);
+    border-radius:18px;
+  }
+  .scan-progress-modal .scan-progress-head strong{font-size:clamp(17px, 4.5vw, 21px)}
+  .scan-progress-modal .scan-progress-head p{font-size:clamp(13px, 3.6vw, 15px);line-height:1.5}
+  .scan-progress-modal .scan-progress-foot{font-size:12px;line-height:1.5}
+}
+@media(max-height:480px){
+  .scan-progress-modal{
+    max-height:calc(100vh - 16px);
+    max-height:calc(100dvh - 16px);
+    padding:14px 16px;
+    border-radius:16px;
+  }
+  .scan-progress-modal .scan-progress-track{margin-top:12px}
+  .scan-progress-modal .scan-progress-foot{margin-top:10px}
+}
