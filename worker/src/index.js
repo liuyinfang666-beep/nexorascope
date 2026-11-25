@@ -1360,35 +1360,47 @@ const ERC20_DISPATCH_SELECTORS = {
 
 async function getRecentTransactionSelectors(address, chainId, env) {
   if (!env.ETHERSCAN_API_KEY) {
-    return { status: "unavailable", message: "ETHERSCAN_API_KEY is not configured", selectors: [], transactionCount: 0 };
+    return { status: "unavailable", message: "ETHERSCAN_API_KEY is not configured", selectors: [], transactionCount: 0, historySource: null };
   }
 
-  const url = new URL(ETHERSCAN_API);
-  url.search = new URLSearchParams({
-    chainid: String(chainId),
-    module: "account",
-    action: "txlist",
-    address,
-    startblock: "0",
-    endblock: "99999999",
-    page: "1",
-    offset: "100",
-    sort: "desc",
-    apikey: env.ETHERSCAN_API_KEY
-  });
+  const requestHistory = async action => {
+    const url = new URL(ETHERSCAN_API);
+    url.search = new URLSearchParams({
+      chainid: String(chainId),
+      module: "account",
+      action,
+      address,
+      startblock: "0",
+      endblock: "99999999",
+      page: "1",
+      offset: "100",
+      sort: "desc",
+      apikey: env.ETHERSCAN_API_KEY
+    });
 
-  try {
     const result = await cachedProviderGet("etherscan", url.toString(), env, { ttl: 180 });
     const data = result.data;
     if (String(data?.status) === "0") {
       const message = String(data?.result || data?.message || "Explorer returned no transaction history");
       if (/no transactions found/i.test(message)) {
-        return { status: "success", message, selectors: [], transactionCount: 0, cache: result.cache || "none" };
+        return { status: "success", message, transactions: [], cache: result.cache || "none" };
       }
-      return { status: classifyFailure(result.httpStatus || 200, message), message, selectors: [], transactionCount: 0, cache: result.cache || "none" };
+      return {
+        status: classifyFailure(result.httpStatus || 200, message),
+        message,
+        transactions: [],
+        cache: result.cache || "none"
+      };
     }
+    return {
+      status: "success",
+      message: "Transaction history retrieved",
+      transactions: Array.isArray(data?.result) ? data.result : [],
+      cache: result.cache || "none"
+    };
+  };
 
-    const transactions = Array.isArray(data?.result) ? data.result : [];
+  const collectSelectors = transactions => {
     const selectorSet = new Set();
     for (const tx of transactions) {
       if (String(tx?.isError || "0") === "1") continue;
@@ -1398,20 +1410,68 @@ async function getRecentTransactionSelectors(address, chainId, env) {
       if (selector !== "00000000") selectorSet.add(selector);
       if (selectorSet.size >= 32) break;
     }
+    return [...selectorSet];
+  };
+
+  try {
+    const direct = await requestHistory("txlist");
+    if (direct.status !== "success") {
+      return {
+        status: direct.status,
+        message: direct.message,
+        selectors: [],
+        transactionCount: direct.transactions.length,
+        historySource: "direct_transactions"
+      };
+    }
+
+    let selectors = collectSelectors(direct.transactions);
+    if (selectors.length) {
+      return {
+        status: "success",
+        message: "Recent successful direct transactions inspected for function selectors",
+        selectors,
+        transactionCount: direct.transactions.length,
+        historySource: "direct_transactions",
+        cache: direct.cache
+      };
+    }
+
+    // If no direct call selectors are available, fall back to internal traces.
+    // This catches contracts reached through another contract's execution path.
+    const internal = await requestHistory("txlistinternal");
+    if (internal.status === "success") {
+      selectors = collectSelectors(internal.transactions);
+      return {
+        status: "success",
+        message: selectors.length
+          ? "Function selectors recovered from recent successful internal transactions"
+          : "No function selectors found in direct or internal transaction history",
+        selectors,
+        transactionCount: direct.transactions.length + internal.transactions.length,
+        historySource: "direct_and_internal_transactions",
+        directTransactionCount: direct.transactions.length,
+        internalTransactionCount: internal.transactions.length,
+        cache: internal.cache || direct.cache
+      };
+    }
 
     return {
-      status: "success",
-      message: "Recent successful direct transactions inspected for function selectors",
-      selectors: [...selectorSet],
-      transactionCount: transactions.length,
-      cache: result.cache || "none"
+      status: "partial",
+      message: "Direct transaction history was checked, but internal transaction history was unavailable: " + internal.message,
+      selectors: [],
+      transactionCount: direct.transactions.length,
+      historySource: "direct_transactions_only",
+      directTransactionCount: direct.transactions.length,
+      internalHistoryStatus: internal.status
     };
   } catch (error) {
     return {
       status: error?.status || "error",
       message: String(error?.message || "Explorer transaction history request failed").slice(0, 200),
       selectors: [],
-      transactionCount: 0
+      transactionCount: 0,
+      historySource: null
     };
   }
 }
