@@ -585,8 +585,10 @@ function summarizeTokenRisk(data, findings) {
     ["hidden_owner", "Hidden owner", "The provider reports a possible hidden ownership mechanism.", 25],
     ["owner_change_balance", "Owner balance modification", "The provider reports that a privileged owner may be able to modify token balances.", 35],
     ["trading_cooldown", "Trading cooldown", "The provider reports a trading cooldown mechanism that may restrict transfers or sales.", 8],
-    ["anti_whale", "Anti-whale restriction", "The provider reports a transaction or wallet-size restriction. Review its limits and who can change them.", 6],
+    ["is_anti_whale", "Anti-whale restriction", "The provider reports a transaction or wallet-size restriction. Review its limits and who can change them.", 6],
     ["anti_whale_modifiable", "Modifiable anti-whale restriction", "The provider reports that anti-whale limits may be changed by a privileged role.", 10],
+    ["owner_change_balance", "Owner balance modification", "The provider reports that a privileged role may be able to modify token balances directly.", 35],
+    ["gas_abuse", "Gas-abuse signal", "The provider reports a possible mechanism that uses interaction gas to mint other assets.", 30],
     ["personal_slippage_modifiable", "Personal tax modification", "The provider reports that tax or slippage may be changed for individual addresses.", 20],
     ["selfdestruct", "Self-destruct capability", "The provider reports a possible self-destruct capability in the contract.", 25],
     ["external_call", "External-call capability", "The provider reports that the contract may make external calls. Review the relevant code and permissions.", 8],
@@ -2243,6 +2245,12 @@ async function handleScan(request, env) {
         ? "partial"
         : "unavailable";
 
+  const contractCoreCheckSuccessful =
+    mode !== "contract" || providers.token_security?.status === "success";
+  const score = contractCoreCheckSuccessful
+    ? scoreFindings(findings)
+    : null;
+
   return json({
     schemaVersion: 3,
     mode,
@@ -2251,9 +2259,9 @@ async function handleScan(request, env) {
     target: address,
     checkedAt: new Date().toISOString(),
     overallStatus,
-    score: scoreFindings(findings),
+    score,
     scoreLabel:
-      scoreFindings(findings) === null
+      score === null
         ? "Insufficient data"
         : "Indicator score",
     findings,
