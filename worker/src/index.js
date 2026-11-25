@@ -277,20 +277,12 @@ async function fetchEtherscanJson(url, timeout = 15000) {
   throw lastError || new Error("Etherscan request failed");
 }
 
-function cacheKeyFor(url) {
-  return new Request(
-    `https://nexorascope-cache.invalid/${encodeURIComponent(url)}`,
-    { method: "GET" }
-  );
-}
-
 async function cachedProviderGet(
   provider,
   url,
   env,
   { ttl = CACHE_TTL_SECONDS, headers = {}, rateLimitScope = null } = {}
 ) {
-  const key = cacheKeyFor(url);
   const inflightKey = `${provider}:${url}`;
   const now = Date.now();
 
@@ -308,23 +300,6 @@ async function cachedProviderGet(
   }
 
   const job = (async () => {
-    try {
-      if (typeof caches !== "undefined" && caches.default) {
-        const hit = await caches.default.match(key);
-
-        if (hit) {
-          const payload = await hit.json();
-
-          MEMORY_CACHE.set(inflightKey, {
-            value: payload,
-            expires: now + ttl * 1000
-          });
-
-          return { ...payload, cache: "edge" };
-        }
-      }
-    } catch (_) {}
-
     const cooldownKey = rateLimitScope
       ? `${provider}:${rateLimitScope}`
       : null;
@@ -436,20 +411,6 @@ async function cachedProviderGet(
           expires: Date.now() + ttl * 1000
         });
 
-        if (typeof caches !== "undefined" && caches.default) {
-          try {
-            await caches.default.put(
-              key,
-              new Response(JSON.stringify(value), {
-                headers: {
-                  "content-type": "application/json",
-                  "cache-control": `public, max-age=${ttl}`
-                }
-              })
-            );
-          } catch (_) {}
-        }
-
         return { ...value, cache: "miss" };
 
       } catch (error) {
@@ -472,7 +433,8 @@ async function cachedProviderGet(
 
         if (error?.status) throw error;
 
-        if (          attempt < MAX_RETRIES &&
+        if (
+          attempt < MAX_RETRIES &&
           failureStatus === "unavailable"
         ) {
           await new Promise(resolve =>
