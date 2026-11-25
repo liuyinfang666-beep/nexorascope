@@ -161,7 +161,16 @@
       p.status === "success" || p.status === "not_applicable"
     ).length;
 
-    if (usableProviderCount === 0 || !Array.isArray(data.findings) || data.findings.length === 0) {
+    const contractCoreCheckMissing =
+      data.mode === "contract" &&
+      data.providers?.token_security?.status !== "success";
+
+    if (
+      usableProviderCount === 0 ||
+      contractCoreCheckMissing ||
+      !Array.isArray(data.findings) ||
+      data.findings.length === 0
+    ) {
       data.score = null;
       data.scoreLabel = "Insufficient data";
       return;
