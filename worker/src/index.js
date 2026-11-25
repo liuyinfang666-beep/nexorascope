@@ -1312,6 +1312,69 @@ async function scanContractOnChain(address, chainId, env, findings) {
     const admin = decodeWordAddress(adminRaw);
     const beacon = decodeWordAddress(beaconRaw);
 
+    // EIP-1167 minimal clones embed their fixed implementation address in runtime code.
+    const cloneMatch = code.match(
+      /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3$/i
+    );
+    const cloneImplementation = cloneMatch
+      ? "0x" + cloneMatch[1]
+      : null;
+
+    // EIP-1967 beacon proxies expose implementation() on the beacon contract.
+    let beaconImplementation = null;
+    if (beacon) {
+      try {
+        const beaconRaw = await chainRpcRequest(
+          env,
+          chainId,
+          "eth_call",
+          [{ to: beacon, data: "0x5c60da1b" }, "latest"]
+        );
+        beaconImplementation = decodeWordAddress(beaconRaw);
+      } catch (_) {}
+    }
+
+    const resolvedImplementation =
+      implementation || beaconImplementation || cloneImplementation;
+    let implementationCodeBytes = null;
+    let implementationHasCode = null;
+    let uupsProxiableUUID = null;
+
+    if (resolvedImplementation) {
+      try {
+        const implementationCode = await chainRpcRequest(
+          env,
+          chainId,
+          "eth_getCode",
+          [resolvedImplementation, "latest"]
+        );
+        if (typeof implementationCode === "string" &&
+            /^0x[0-9a-f]*$/i.test(implementationCode)) {
+          implementationCodeBytes = Math.max(0, (implementationCode.length - 2) / 2);
+          implementationHasCode = implementationCodeBytes > 0;
+        }
+      } catch (_) {}
+
+      // EIP-1822/UUPS implementations commonly expose proxiableUUID().
+      try {
+        const uuidRaw = await chainRpcRequest(
+          env,
+          chainId,
+          "eth_call",
+          [{ to: resolvedImplementation, data: "0x52d1902d" }, "latest"]
+        );
+        uupsProxiableUUID = /^0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc$/i.test(uuidRaw || "");
+      } catch (_) {}
+    }
+
+    const proxyType = implementation
+      ? "eip1967"
+      : beacon
+        ? "eip1967_beacon"
+        : cloneImplementation
+          ? "eip1167_minimal_clone"
+          : "not_detected";
+
     if (implementation) {
       addFinding(
         findings,
@@ -1337,9 +1400,39 @@ async function scanContractOnChain(address, chainId, env, findings) {
         findings,
         "EIP-1967 beacon",
         "Live storage read identifies beacon contract " + beacon +
-          ". The beacon's implementation and upgrade authority require separate review.",
+          (beaconImplementation ? "; its implementation() call returned " + beaconImplementation : "; implementation() could not be resolved") +
+          ". The beacon's upgrade authority requires separate review.",
         "warn",
         5
+      );
+    }
+    if (cloneImplementation) {
+      addFinding(
+        findings,
+        "EIP-1167 minimal proxy",
+        "Runtime bytecode matches the standard minimal-clone pattern and embeds fixed implementation " +
+          cloneImplementation + ". The implementation is not upgradeable through the standard clone mechanism, but its own behavior still requires review.",
+        "warn",
+        5
+      );
+    }
+    if (resolvedImplementation && implementationHasCode === false) {
+      addFinding(
+        findings,
+        "Proxy implementation code missing",
+        "The resolved implementation address " + resolvedImplementation +
+          " returned no runtime bytecode. Proxy behavior may be broken or the implementation reference may be invalid.",
+        "warn",
+        12
+      );
+    }
+    if (uupsProxiableUUID === true) {
+      addFinding(
+        findings,
+        "UUPS upgrade interface",
+        "The resolved implementation returned the EIP-1967 implementation slot from proxiableUUID(), indicating a UUPS-compatible upgrade interface. Upgrade authorization must be reviewed.",
+        "warn",
+        8
       );
     }
 
@@ -1347,7 +1440,7 @@ async function scanContractOnChain(address, chainId, env, findings) {
       provider: "Direct chain RPC",
       status: "success",
       incomplete: false,
-      message: "Live bytecode, token-interface and proxy-slot checks completed where supported.",
+      message: "Live bytecode, token-interface, proxy implementation and upgrade-interface checks completed where supported.",
       bytecodeBytes,
       bytecodeSha256: codeHash,
       tokenMetadata: {
@@ -1359,9 +1452,16 @@ async function scanContractOnChain(address, chainId, env, findings) {
       owner: owner,
       paused: paused,
       proxy: {
-        implementation: implementation,
+        type: proxyType,
+        implementation: resolvedImplementation,
+        eip1967Implementation: implementation,
+        cloneImplementation: cloneImplementation,
         admin: admin,
-        beacon: beacon
+        beacon: beacon,
+        beaconImplementation: beaconImplementation,
+        implementationCodeBytes: implementationCodeBytes,
+        implementationHasCode: implementationHasCode,
+        uupsProxiableUUID: uupsProxiableUUID
       }
     };
   } catch (error) {
