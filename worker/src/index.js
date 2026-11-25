@@ -1957,8 +1957,15 @@ async function scanContractOnChain(address, chainId, env, findings) {
       interfaceFingerprint: {
         erc20Selectors: allErc20Selectors,
         targetSelectorCount: targetSelectors.length,
-        implementationSelectorCount: implementationErc20Selectors.length,
-        selectorRoutedImplementationCount: selectorRoutedImplementations.filter(entry => entry.implementationHasCode === true).length
+        implementationSelectorCount: [...new Set([
+          ...implementationErc20Selectors,
+          ...selectorRoutedErc20Selectors
+        ])].length,
+        selectorRoutedImplementationCount: new Set(
+          selectorRoutedImplementations
+            .filter(entry => entry.implementationHasCode === true)
+            .map(entry => entry.implementation.toLowerCase())
+        ).size
       }
     };
   } catch (error) {
