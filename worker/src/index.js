@@ -561,7 +561,7 @@ function summarizeTokenRisk(data, findings) {
       ? Object.values(result)[0] || result
       : null;
 
-  if (!token || typeof token !== "object") {
+  if (!token || typeof token !== "object" || Array.isArray(token)) {
     addFinding(
       findings,
       "Token security data",
@@ -574,12 +574,24 @@ function summarizeTokenRisk(data, findings) {
 
   const checks = [
     ["is_honeypot", "Honeypot signal", "The provider flagged a possible honeypot characteristic.", 45],
+    ["cannot_buy", "Buy restriction", "The provider reports that this token may not be buyable. This can also occur for reward-only tokens; verify the token's intended use.", 35],
+    ["cannot_sell_all", "Sell restriction", "The provider reports a restriction that may prevent holders from selling their entire balance.", 30],
     ["is_mintable", "Minting capability", "The provider reports that the token may be mintable. Review who controls this capability.", 18],
     ["is_blacklisted", "Blacklist capability", "The provider reports a blacklist-related control or risk flag.", 22],
     ["transfer_pausable", "Transfer pause capability", "Transfers may be pausable by a privileged role.", 12],
-    ["slippage_modifiable", "Modifiable trading tax", "The provider reports that buy/sell tax or slippage may be modifiable.", 18],
-    ["is_proxy", "Proxy contract", "This token is reported as a proxy. Review implementation and upgrade authority.", 8],
-    ["can_take_back_ownership", "Ownership recovery capability", "The provider reports a possible ownership recovery capability.", 20]
+    ["slippage_modifiable", "Modifiable trading tax", "The provider reports that buy/sell tax may be modifiable by a privileged role.", 18],
+    ["is_proxy", "Proxy contract", "This token is reported as a proxy. Review the implementation and upgrade authority.", 8],
+    ["can_take_back_ownership", "Ownership recovery capability", "The provider reports a possible ownership recovery capability.", 20],
+    ["hidden_owner", "Hidden owner", "The provider reports a possible hidden ownership mechanism.", 25],
+    ["trading_cooldown", "Trading cooldown", "The provider reports a trading cooldown mechanism that may restrict transfers or sales.", 8],
+    ["is_anti_whale", "Anti-whale restriction", "The provider reports a transaction or wallet-size restriction. Review its limits and who can change them.", 6],
+    ["anti_whale_modifiable", "Modifiable anti-whale restriction", "The provider reports that anti-whale limits may be changed by a privileged role.", 10],
+    ["owner_change_balance", "Owner balance modification", "The provider reports that a privileged role may be able to modify token balances directly.", 35],
+    ["gas_abuse", "Gas-abuse signal", "The provider reports a possible mechanism that uses interaction gas to mint other assets.", 30],
+    ["personal_slippage_modifiable", "Personal tax modification", "The provider reports that tax or slippage may be changed for individual addresses.", 20],
+    ["selfdestruct", "Self-destruct capability", "The provider reports a possible self-destruct capability in the contract.", 25],
+    ["external_call", "External-call capability", "The provider reports that the contract may make external calls. Review the relevant code and permissions.", 8],
+    ["is_whitelisted", "Whitelist restriction", "The provider reports a whitelist mechanism that may limit which addresses can trade or transfer.", 10]
   ];
 
   for (const [key, title, detail, weight] of checks) {
@@ -590,9 +602,9 @@ function summarizeTokenRisk(data, findings) {
       token[key] === 0 ||
       token[key] === false
     ) {
-      addFinding(findings, title, "No positive flag was returned for this check.", "good", 0);
+      addFinding(findings, title, "The provider returned a negative flag for this check. This does not rule out other risks.", "good", 0);
     } else {
-      addFinding(findings, title, "Not reported by the provider.", "neutral", 0);
+      addFinding(findings, title, "Not reported by the provider; this check remains unknown.", "neutral", 0);
     }
   }
 
@@ -613,20 +625,37 @@ function summarizeTokenRisk(data, findings) {
       0
     );
   } else {
-    addFinding(findings, "Source verification", "Verification status was not reported.", "neutral", 0);
+    addFinding(findings, "Source verification", "Verification status was not reported by the provider.", "neutral", 0);
   }
 
-  for (const key of ["buy_tax", "sell_tax"]) {
-    const n = Number(token[key]);
+  for (const key of ["buy_tax", "sell_tax", "transfer_tax"]) {
+    const raw = token[key];
+    const n = Number(raw);
+    const title = key === "buy_tax"
+      ? "Buy tax"
+      : key === "sell_tax" ? "Sell tax" : "Transfer tax";
 
-    if (Number.isFinite(n) && token[key] !== "" && n > 0.1) {
+    if (raw === "" || raw === null || raw === undefined) {
+      addFinding(findings, title, "Tax value was not reported by the provider; it remains unknown.", "neutral", 0);
+      continue;
+    }
+
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+      addFinding(findings, title, "The provider returned a tax value that could not be interpreted safely.", "neutral", 0);
+      continue;
+    }
+
+    const percent = (n * 100).toFixed(2).replace(/\.00$/, "");
+    if (n > 0) {
       addFinding(
         findings,
-        key === "buy_tax" ? "Buy tax" : "Sell tax",
-        `Provider-reported value: ${token[key]}. Confirm units and current behavior before relying on this figure.`,
+        title,
+        `Provider-reported value: ${percent}%. GoPlus reports tax on a 0–1 scale; confirm current on-chain behavior before relying on this figure.`,
         n > 0.25 ? "bad" : "warn",
-        n > 0.25 ? 15 : 8
+        n > 0.25 ? 15 : n > 0.1 ? 8 : 3
       );
+    } else {
+      addFinding(findings, title, "The provider reported 0% for this tax field. This is a provider result, not a guarantee of future behavior.", "good", 0);
     }
   }
 
@@ -1956,7 +1985,6 @@ async function handleScan(request, env) {
       const result = await cachedProviderGet("goplus", url, env);
 
       providers[key] = providerStatus("GoPlus", result);
-      sources.push(`GoPlus ${key}`);
 
       const raw = result.data;
       const data = raw?.result ?? raw?.data ?? raw;
@@ -1974,6 +2002,7 @@ async function handleScan(request, env) {
       };
 
       await onSuccess(result.data);
+      sources.push(`GoPlus ${key}`);
 
     } catch (e) {
       providers[key] = {
@@ -2047,7 +2076,69 @@ async function handleScan(request, env) {
       runGoPlus(
         "token_security",
         `${GOPLUS_API}/api/v1/token_security/${chainId}?contract_addresses=${address.toLowerCase()}`,
-        data => summarizeTokenRisk(data, findings)
+        data => {
+          if (Number(data?.code) !== 1) {
+            const message = String(data?.message || data?.msg || "GoPlus did not confirm a successful token-security response");
+            const status = classifyFailure(200, message);
+            throw Object.assign(new Error(message), {
+              status: status === "error" ? "error" : status
+            });
+          }
+
+          const records = unwrapResult(data);
+          const matchedRecord = records && typeof records === "object"
+            ? Object.entries(records).find(([key, value]) =>
+                key.toLowerCase() === address.toLowerCase() &&
+                value && typeof value === "object"
+              )?.[1]
+            : null;
+
+          if (!matchedRecord) {
+            throw Object.assign(
+              new Error("GoPlus returned no token-security record for the requested contract."),
+              { status: "error" }
+            );
+          }
+
+          const coreFields = [
+            "is_honeypot",
+            "cannot_buy",
+            "cannot_sell_all",
+            "is_mintable",
+            "is_blacklisted",
+            "transfer_pausable",
+            "slippage_modifiable",
+            "is_open_source",
+            "buy_tax",
+            "sell_tax"
+          ];
+          const checkedCoreCount = coreFields.filter(key =>
+            matchedRecord[key] !== undefined &&
+            matchedRecord[key] !== null &&
+            matchedRecord[key] !== ""
+          ).length;
+          const minimumCoreCoverage = 5;
+
+          providers.token_security.checkedCount = checkedCoreCount;
+          providers.token_security.candidateCount = coreFields.length;
+          providers.token_security.incomplete = checkedCoreCount < minimumCoreCoverage;
+          providers.token_security.message = providers.token_security.incomplete
+            ? `Only ${checkedCoreCount} of ${coreFields.length} core token checks returned data. The report is incomplete; missing fields remain unknown.`
+            : `${checkedCoreCount} of ${coreFields.length} core token checks returned data.`;
+
+          addFinding(
+            findings,
+            "Token security data coverage",
+            providers.token_security.message,
+            providers.token_security.incomplete ? "neutral" : "good",
+            0
+          );
+
+          summarizeTokenRisk(
+            { result: { [address.toLowerCase()]: matchedRecord } },
+            findings
+          );
+        }
       )
     );
 
@@ -2176,7 +2267,8 @@ async function handleScan(request, env) {
   ).length;
 
   const hasIncompleteDiscovery =
-    providers.erc20_onchain_discovery?.incomplete === true;
+    providers.erc20_onchain_discovery?.incomplete === true ||
+    providers.token_security?.incomplete === true;
 
   const overallStatus =
     successful === requiredProviderValues.length &&
@@ -2187,6 +2279,16 @@ async function handleScan(request, env) {
         ? "partial"
         : "unavailable";
 
+  const contractCoreCheckSuccessful =
+    mode !== "contract" ||
+    (
+      providers.token_security?.status === "success" &&
+      providers.token_security?.incomplete !== true
+    );
+  const score = contractCoreCheckSuccessful
+    ? scoreFindings(findings)
+    : null;
+
   return json({
     schemaVersion: 3,
     mode,
@@ -2195,9 +2297,9 @@ async function handleScan(request, env) {
     target: address,
     checkedAt: new Date().toISOString(),
     overallStatus,
-    score: scoreFindings(findings),
+    score,
     scoreLabel:
-      scoreFindings(findings) === null
+      score === null
         ? "Insufficient data"
         : "Indicator score",
     findings,
