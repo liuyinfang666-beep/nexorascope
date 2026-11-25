@@ -60,8 +60,13 @@
         ? "Partial results"
         : "No provider results";
 
+    const scoreUnavailable = data.score === null || data.score === undefined;
+    const scoreHeading = document.querySelector(".score-panel > div:first-child > span.fine");
+    if (scoreHeading) {
+      scoreHeading.textContent = scoreUnavailable ? "Insufficient data" : "Indicator score";
+    }
     document.getElementById("scoreValue").textContent =
-      data.score === null || data.score === undefined ? "—" : `${data.score}/100`;
+      scoreUnavailable ? "" : `${data.score}/100`;
     document.getElementById("scoreDescription").textContent =
       data.score === null || data.score === undefined
         ? "Insufficient data — required provider checks were not completed."
@@ -161,7 +166,20 @@
       p.status === "success" || p.status === "not_applicable"
     ).length;
 
-    if (usableProviderCount === 0 || !Array.isArray(data.findings) || data.findings.length === 0) {
+    // Contract scores require a successful, complete GoPlus token-security check.
+    const contractCoreCheckMissing =
+      data.mode === "contract" &&
+      (
+        data.providers?.token_security?.status !== "success" ||
+        data.providers?.token_security?.incomplete === true
+      );
+
+    if (
+      usableProviderCount === 0 ||
+      contractCoreCheckMissing ||
+      !Array.isArray(data.findings) ||
+      data.findings.length === 0
+    ) {
       data.score = null;
       data.scoreLabel = "Insufficient data";
       return;
