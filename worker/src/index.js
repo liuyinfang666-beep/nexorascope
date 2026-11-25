@@ -583,7 +583,6 @@ function summarizeTokenRisk(data, findings) {
     ["is_proxy", "Proxy contract", "This token is reported as a proxy. Review the implementation and upgrade authority.", 8],
     ["can_take_back_ownership", "Ownership recovery capability", "The provider reports a possible ownership recovery capability.", 20],
     ["hidden_owner", "Hidden owner", "The provider reports a possible hidden ownership mechanism.", 25],
-    ["owner_change_balance", "Owner balance modification", "The provider reports that a privileged owner may be able to modify token balances.", 35],
     ["trading_cooldown", "Trading cooldown", "The provider reports a trading cooldown mechanism that may restrict transfers or sales.", 8],
     ["is_anti_whale", "Anti-whale restriction", "The provider reports a transaction or wallet-size restriction. Review its limits and who can change them.", 6],
     ["anti_whale_modifiable", "Modifiable anti-whale restriction", "The provider reports that anti-whale limits may be changed by a privileged role.", 10],
