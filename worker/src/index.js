@@ -1661,7 +1661,12 @@ async function scanContractOnChain(address, chainId, env, findings) {
       for (const selector of selectorHistory.selectors || []) {
         if (!selectorNames[selector]) selectorNames[selector] = "observed_" + selector;
       }
-      const selectorEntries = Object.entries(selectorNames).slice(0, 41);
+      // Keep this inspection within the Workers subrequest budget. The
+      // transaction history may contain many selectors, so inspect the nine
+      // standard ERC-20 slots plus at most nine recent observed selectors.
+      const MAX_SELECTOR_STORAGE_READS = 18;
+      const MAX_IMPLEMENTATION_CODE_CHECKS = 6;
+      const selectorEntries = Object.entries(selectorNames).slice(0, MAX_SELECTOR_STORAGE_READS);
       const slotReads = await Promise.all(selectorEntries.map(async ([selector, functionName]) => {
         const slot = selectorStorageSlot(selector, salt);
         try {
@@ -1676,8 +1681,21 @@ async function scanContractOnChain(address, chainId, env, findings) {
             message: String(error?.message || "Storage read failed").slice(0, 160) };
         }
       }));
+      // Prioritize addresses referenced by the greatest number of observed
+      // selectors; check each unique implementation only once.
+      const addressUseCounts = new Map();
+      for (const entry of slotReads) {
+        if (entry.implementation) {
+          const key = entry.implementation.toLowerCase();
+          addressUseCounts.set(key, (addressUseCounts.get(key) || 0) + 1);
+        }
+      }
+      const addressesToCheck = [...addressUseCounts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, MAX_IMPLEMENTATION_CODE_CHECKS)
+        .map(([implementationAddress]) => implementationAddress);
       const codeChecks = new Map();
-      await Promise.all([...selectorImplementationAddresses].map(async implementationAddress => {
+      await Promise.all(addressesToCheck.map(async implementationAddress => {
         try {
           const implementationCode = await chainRpcRequest(env, chainId, "eth_getCode",
             [implementationAddress, "latest"]);
@@ -1687,23 +1705,27 @@ async function scanContractOnChain(address, chainId, env, findings) {
             selectors: validCode ? extractPushedSelectors(implementationCode)
               .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
               .map(selector => ERC20_DISPATCH_SELECTORS[selector]) : [],
-            hasCode: validCode && implementationCode.length > 2
+            hasCode: validCode && implementationCode.length > 2,
+            checkStatus: "checked"
           });
         } catch (error) {
           codeChecks.set(implementationAddress, {
             codeBytes: null, selectors: [], hasCode: null,
-            failureType: error?.status || "error"
+            failureType: error?.status || "error",
+            checkStatus: "error"
           });
         }
       }));
       for (const entry of slotReads) {
-        const check = entry.implementation
-          ? codeChecks.get(entry.implementation.toLowerCase())
-          : null;
+        const key = entry.implementation ? entry.implementation.toLowerCase() : null;
+        const check = key ? codeChecks.get(key) : null;
         selectorRoutedImplementations.push({
           ...entry,
           implementationCodeBytes: check?.codeBytes ?? null,
           implementationHasCode: check?.hasCode ?? null,
+          implementationCodeCheckStatus: entry.implementation
+            ? (check?.checkStatus || "deferred_subrequest_budget")
+            : "not_applicable",
           implementationErc20Selectors: check?.selectors ?? []
         });
       }
@@ -1842,15 +1864,26 @@ async function scanContractOnChain(address, chainId, env, findings) {
       const mapped = selectorRoutedImplementations.filter(entry => entry.implementation).length;
       const verified = selectorRoutedImplementations.filter(entry => entry.implementationHasCode === true).length;
       const missingCode = selectorRoutedImplementations.filter(entry => entry.implementationHasCode === false).length;
+      const deferredCodeChecks = selectorRoutedImplementations.filter(entry =>
+        entry.implementation && entry.implementationCodeCheckStatus === "deferred_subrequest_budget"
+      ).length;
+      const observedSelectorsChecked = Math.max(0,
+        selectorRoutedImplementations.length - Object.keys(ERC20_DISPATCH_SELECTORS).length
+      );
+      const observedSelectorsDeferred = Math.max(0,
+        (selectorHistory.selectors || []).length - observedSelectorsChecked
+      );
       addFinding(
         findings,
         "Custom selector-routed proxy",
         "Runtime bytecode contains a selector-keyed storage dispatcher pattern. Checked " +
-          selectorRoutedImplementations.length + " selector slots (" +
+          selectorRoutedImplementations.length + " storage slots (" +
           Object.keys(ERC20_DISPATCH_SELECTORS).length + " common ERC-20 selectors plus " +
-          (selectorHistory.selectors || []).length + " observed transaction selectors): " +
-          mapped + " mapped address(es), " + verified + " implementation(s) with code" +
-          (missingCode ? ", and " + missingCode + " mapped address(es) without code" : "") +
+          observedSelectorsChecked + " of " + (selectorHistory.selectors || []).length +
+          " observed transaction selectors; " + observedSelectorsDeferred + " deferred to stay within the Worker subrequest budget): " +
+          mapped + " mapped selector(s), " + verified + " selector mapping(s) point to implementation code" +
+          (missingCode ? ", " + missingCode + " mapped selector(s) point to addresses without code" : "") +
+          (deferredCodeChecks ? ", " + deferredCodeChecks + " mapped selector(s) have deferred code checks" : "") +
           ". Transaction-history discovery status: " + selectorHistory.status +
           ". This is pattern-based detection; mappings and implementation behavior require manual review.",
         missingCode ? "warn" : "neutral",
