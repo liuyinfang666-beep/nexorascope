@@ -163,7 +163,10 @@
 
     const contractCoreCheckMissing =
       data.mode === "contract" &&
-      data.providers?.token_security?.status !== "success";
+      (
+        data.providers?.token_security?.status !== "success" ||
+        data.providers?.token_security?.incomplete === true
+      );
 
     if (
       usableProviderCount === 0 ||
