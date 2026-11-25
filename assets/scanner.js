@@ -60,8 +60,13 @@
         ? "Partial results"
         : "No provider results";
 
+    const scoreUnavailable = data.score === null || data.score === undefined;
+    const scoreHeading = document.querySelector(".score-panel > div:first-child > span.fine");
+    if (scoreHeading) {
+      scoreHeading.textContent = scoreUnavailable ? "Insufficient data" : "Indicator score";
+    }
     document.getElementById("scoreValue").textContent =
-      data.score === null || data.score === undefined ? "—" : `${data.score}/100`;
+      scoreUnavailable ? "" : `${data.score}/100`;
     document.getElementById("scoreDescription").textContent =
       data.score === null || data.score === undefined
         ? "Insufficient data — required provider checks were not completed."
