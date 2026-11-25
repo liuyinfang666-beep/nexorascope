@@ -645,7 +645,7 @@ function summarizeTokenRisk(data, findings) {
       continue;
     }
 
-    const percent = (n * 100).toFixed(2).replace(/\\.00$/, "");
+    const percent = (n * 100).toFixed(2).replace(/\.00$/, "");
     if (n > 0) {
       addFinding(
         findings,
