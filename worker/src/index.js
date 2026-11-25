@@ -1023,6 +1023,366 @@ async function bscEthCall(env, to, data) {
 
 
 
+
+const EIP1967_IMPLEMENTATION_SLOT =
+  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+const EIP1967_ADMIN_SLOT =
+  "0xb53127684a568b3173ae13b9f8a6016e019000000000000000000000000000000";
+const EIP1967_BEACON_SLOT =
+  "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50";
+
+async function chainRpcRequest(env, chainId, method, params) {
+  const id = String(chainId);
+
+  if (id === "1") {
+    if (!env.ETHERSCAN_API_KEY) {
+      throw Object.assign(new Error("ETHERSCAN_API_KEY is not configured for Ethereum RPC reads"), {
+        status: "unavailable",
+        failureType: "missing_rpc_configuration"
+      });
+    }
+
+    const query = new URLSearchParams({
+      chainid: id,
+      module: "proxy",
+      action: method,
+      apikey: env.ETHERSCAN_API_KEY
+    });
+
+    if (method === "eth_call") {
+      query.set("to", params[0].to);
+      query.set("data", params[0].data);
+      query.set("tag", params[1] || "latest");
+    } else if (method === "eth_getCode") {
+      query.set("address", params[0]);
+      query.set("tag", params[1] || "latest");
+    } else if (method === "eth_getStorageAt") {
+      query.set("address", params[0]);
+      query.set("position", params[1]);
+      query.set("tag", params[2] || "latest");
+    } else {
+      throw Object.assign(new Error("Unsupported Ethereum RPC method: " + method), {
+        status: "error",
+        failureType: "unsupported_rpc_method"
+      });
+    }
+
+    const response = await fetchEtherscanJson(ETHERSCAN_API + "?" + query.toString());
+    if (response?.result === undefined || response?.result === null) {
+      throw Object.assign(new Error("Etherscan RPC response did not contain a result"), {
+        status: "error",
+        failureType: "missing_rpc_result"
+      });
+    }
+    return response.result;
+  }
+
+  const endpoint = id === "8453"
+    ? String(env.ANKR_BASE_RPC_URL || "").trim()
+    : id === "56"
+      ? String(env.ANKR_BSC_RPC_URL || "").trim()
+      : "";
+
+  if (!endpoint) {
+    throw Object.assign(new Error("Ankr RPC endpoint is not configured for chainId " + id), {
+      status: "unavailable",
+      failureType: "missing_rpc_configuration"
+    });
+  }
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params
+    }),
+    signal: AbortSignal.timeout(20000)
+  });
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw Object.assign(new Error("Chain RPC returned invalid JSON"), {
+      status: "unavailable",
+      httpStatus: response.status
+    });
+  }
+
+  if (!response.ok || payload?.error) {
+    const message = payload?.error?.message || ("Chain RPC HTTP " + response.status);
+    throw Object.assign(new Error(message), {
+      status: classifyFailure(response.status, message),
+      httpStatus: response.status
+    });
+  }
+
+  if (payload?.result === undefined || payload?.result === null) {
+    throw Object.assign(new Error("Chain RPC response did not contain a result"), {
+      status: "error",
+      httpStatus: response.status
+    });
+  }
+
+  return payload.result;
+}
+
+function decodeWordAddress(raw) {
+  if (!/^0x[0-9a-f]{64}$/i.test(raw || "")) return null;
+  const address = "0x" + raw.slice(-40);
+  return /^0x0{40}$/i.test(address) ? null : address;
+}
+
+function decodeWordUint(raw) {
+  if (!/^0x[0-9a-f]{64}$/i.test(raw || "")) return null;
+  try {
+    return BigInt(raw).toString(10);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function scanContractOnChain(address, chainId, env, findings) {
+  const call = async selector => {
+    try {
+      return await chainRpcRequest(
+        env,
+        chainId,
+        "eth_call",
+        [{ to: address, data: selector }, "latest"]
+      );
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const storage = async slot => {
+    try {
+      return await chainRpcRequest(
+        env,
+        chainId,
+        "eth_getStorageAt",
+        [address, slot, "latest"]
+      );
+    } catch (_) {
+      return null;
+    }
+  };
+
+  try {
+    const code = await chainRpcRequest(
+      env,
+      chainId,
+      "eth_getCode",
+      [address, "latest"]
+    );
+
+    if (typeof code !== "string" || !/^0x[0-9a-f]*$/i.test(code)) {
+      throw Object.assign(new Error("RPC returned invalid contract bytecode"), {
+        status: "error"
+      });
+    }
+
+    const bytecodeBytes = Math.max(0, (code.length - 2) / 2);
+    if (bytecodeBytes === 0) {
+      addFinding(
+        findings,
+        "On-chain contract code",
+        "The selected chain returned no deployed bytecode at this address. This may be an externally owned account, a wrong network, or a contract that no longer has code.",
+        "warn",
+        10
+      );
+      return {
+        provider: "Direct chain RPC",
+        status: "success",
+        incomplete: false,
+        message: "RPC confirmed that no deployed bytecode exists at the target address.",
+        bytecodeBytes: 0
+      };
+    }
+
+    let codeHash = null;
+    try {
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(code.toLowerCase())
+      );
+      codeHash = Array.from(new Uint8Array(digest))
+        .map(byte => byte.toString(16).padStart(2, "0"))
+        .join("");
+    } catch (_) {}
+
+    addFinding(
+      findings,
+      "On-chain contract code",
+      "Live RPC confirms deployed runtime bytecode. Bytecode size: " +
+        bytecodeBytes +
+        " bytes" +
+        (codeHash ? "; SHA-256: " + codeHash : "") +
+        ". A code hash identifies this bytecode snapshot; it is not a safety verdict.",
+      "good",
+      0
+    );
+
+    const [nameRaw, symbolRaw, decimalsRaw, supplyRaw, ownerRaw, getOwnerRaw, pausedRaw,
+      implementationRaw, adminRaw, beaconRaw] = await Promise.all([
+      call("0x06fdde03"),
+      call("0x95d89b41"),
+      call("0x313ce567"),
+      call("0x18160ddd"),
+      call("0x8da5cb5b"),
+      call("0x893d20e8"),
+      call("0x5c975abb"),
+      storage(EIP1967_IMPLEMENTATION_SLOT),
+      storage(EIP1967_ADMIN_SLOT),
+      storage(EIP1967_BEACON_SLOT)
+    ]);
+
+    const name = decodeErc20Text(nameRaw);
+    const symbol = decodeErc20Text(symbolRaw);
+    const decimals = decodeWordUint(decimalsRaw);
+    const totalSupply = decodeWordUint(supplyRaw);
+    const owner = decodeWordAddress(ownerRaw) || decodeWordAddress(getOwnerRaw);
+    const paused = /^0x0{63}1$/i.test(pausedRaw || "")
+      ? true
+      : /^0x0{64}$/i.test(pausedRaw || "")
+        ? false
+        : null;
+
+    if (name || symbol || decimals !== null || totalSupply !== null) {
+      addFinding(
+        findings,
+        "On-chain token metadata",
+        "Live contract calls returned " +
+          [name ? "name: " + name : null,
+           symbol ? "symbol: " + symbol : null,
+           decimals !== null ? "decimals: " + decimals : null,
+           totalSupply !== null ? "raw totalSupply: " + totalSupply : null]
+            .filter(Boolean).join("; ") +
+          ". These are contract-reported values and may be non-standard.",
+        "good",
+        0
+      );
+    } else {
+      addFinding(
+        findings,
+        "ERC-20 interface checks",
+        "The common ERC-20 metadata and supply calls did not return decodable values. This address may not be an ERC-20 token, or it may use a non-standard interface.",
+        "neutral",
+        0
+      );
+    }
+
+    if (owner) {
+      addFinding(
+        findings,
+        "On-chain owner control",
+        "The contract returned owner address " + owner +
+          ". An active owner can represent privileged control; inspect its permissions and whether ownership is renounced or governed by a multisig/timelock.",
+        "warn",
+        5
+      );
+    }
+
+    if (paused === true) {
+      addFinding(
+        findings,
+        "Contract pause state",
+        "The contract's paused() call currently returns true.",
+        "warn",
+        12
+      );
+    } else if (paused === false) {
+      addFinding(
+        findings,
+        "Contract pause state",
+        "The contract's paused() call currently returns false. This does not prove that transfers cannot be restricted through other mechanisms.",
+        "good",
+        0
+      );
+    }
+
+    const implementation = decodeWordAddress(implementationRaw);
+    const admin = decodeWordAddress(adminRaw);
+    const beacon = decodeWordAddress(beaconRaw);
+
+    if (implementation) {
+      addFinding(
+        findings,
+        "EIP-1967 proxy implementation",
+        "Live storage read identifies implementation " + implementation +
+          ". Proxy logic and implementation permissions must be reviewed separately.",
+        "warn",
+        8
+      );
+    }
+    if (admin) {
+      addFinding(
+        findings,
+        "EIP-1967 proxy administrator",
+        "Live storage read identifies proxy administrator " + admin +
+          ". This address may have upgrade control depending on the proxy implementation.",
+        "warn",
+        5
+      );
+    }
+    if (beacon) {
+      addFinding(
+        findings,
+        "EIP-1967 beacon",
+        "Live storage read identifies beacon contract " + beacon +
+          ". The beacon's implementation and upgrade authority require separate review.",
+        "warn",
+        5
+      );
+    }
+
+    return {
+      provider: "Direct chain RPC",
+      status: "success",
+      incomplete: false,
+      message: "Live bytecode, token-interface and proxy-slot checks completed where supported.",
+      bytecodeBytes,
+      bytecodeSha256: codeHash,
+      tokenMetadata: {
+        name: name || null,
+        symbol: symbol || null,
+        decimals: decimals,
+        totalSupplyRaw: totalSupply
+      },
+      owner: owner,
+      paused: paused,
+      proxy: {
+        implementation: implementation,
+        admin: admin,
+        beacon: beacon
+      }
+    };
+  } catch (error) {
+    addFinding(
+      findings,
+      "On-chain contract scan unavailable",
+      String(error?.message || "Direct chain RPC check failed").slice(0, 240),
+      "neutral",
+      0
+    );
+    return {
+      provider: "Direct chain RPC",
+      status: error?.status || "error",
+      incomplete: true,
+      httpStatus: error?.httpStatus || null,
+      message: String(error?.message || "Direct chain RPC check failed").slice(0, 240),
+      failureType: error?.failureType || null
+    };
+  }
+}
+
 async function readErc20Metadata(token, chainId, env) {
   const id = String(chainId);
   const key = `${id}:${token.toLowerCase()}`;
@@ -2043,6 +2403,18 @@ async function handleScan(request, env) {
     }
 
   } else {
+    jobs.push((async () => {
+      providers.onchain_contract = await scanContractOnChain(
+        address,
+        chainId,
+        env,
+        findings
+      );
+      if (providers.onchain_contract.status === "success") {
+        sources.push("Direct chain RPC contract inspection");
+      }
+    })());
+
     jobs.push(
       runGoPlus(
         "token_security",
