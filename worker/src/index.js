@@ -13,6 +13,25 @@ const MAX_RETRIES = 1;
 
 const ETHERSCAN_API = "https://api.etherscan.io/v2/api";
 const GOPLUS_API = "https://api.gopluslabs.io";
+const PROVIDER_COOLDOWNS = new Map();
+const GOPLUS_DEFAULT_COOLDOWN_MS = 60 * 1000;
+
+function retryAfterMilliseconds(response, fallbackMs = GOPLUS_DEFAULT_COOLDOWN_MS) {
+  const value = response?.headers?.get("retry-after");
+  if (!value) return fallbackMs;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.max(seconds * 1000, 1000), 5 * 60 * 1000);
+  }
+
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) {
+    return Math.min(Math.max(dateMs - Date.now(), 1000), 5 * 60 * 1000);
+  }
+
+  return fallbackMs;
+}
 
 const APPROVAL_TOPIC =
   "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
@@ -255,7 +274,7 @@ async function cachedProviderGet(
   provider,
   url,
   env,
-  { ttl = CACHE_TTL_SECONDS, headers = {} } = {}
+  { ttl = CACHE_TTL_SECONDS, headers = {}, rateLimitScope = null } = {}
 ) {
   const key = cacheKeyFor(url);
   const inflightKey = `${provider}:${url}`;
@@ -291,6 +310,25 @@ async function cachedProviderGet(
         }
       }
     } catch (_) {}
+
+    const cooldownKey = rateLimitScope
+      ? `${provider}:${rateLimitScope}`
+      : null;
+    const cooldownUntil = cooldownKey
+      ? (PROVIDER_COOLDOWNS.get(cooldownKey) || 0)
+      : 0;
+
+    if (cooldownUntil > Date.now()) {
+      const retryAfterSeconds = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      throw Object.assign(
+        new Error(`${provider} rate limit cooldown is active; retry in about ${retryAfterSeconds} seconds`),
+        {
+          status: "rate_limited",
+          httpStatus: null,
+          retryAfterSeconds
+        }
+      );
+    }
 
     let lastError = null;
 
@@ -346,6 +384,13 @@ async function cachedProviderGet(
             }
           );
 
+          if (failureStatus === "rate_limited" && cooldownKey) {
+            const cooldownMs = retryAfterMilliseconds(response);
+            PROVIDER_COOLDOWNS.set(cooldownKey, Date.now() + cooldownMs);
+            err.retryAfterSeconds = Math.ceil(cooldownMs / 1000);
+            throw err;
+          }
+
           if (
             attempt < MAX_RETRIES &&
             (
@@ -395,12 +440,23 @@ async function cachedProviderGet(
       } catch (error) {
         lastError = error;
 
-        if (error?.status) throw error;
-
-        const failureStatus = classifyFailure(
+        const failureStatus = error?.status || classifyFailure(
           error?.httpStatus || 0,
           error?.message || ""
         );
+
+        if (failureStatus === "rate_limited" && cooldownKey) {
+          const cooldownMs = error?.retryAfterMs ||
+            GOPLUS_DEFAULT_COOLDOWN_MS;
+          PROVIDER_COOLDOWNS.set(cooldownKey, Date.now() + cooldownMs);
+          error.status = "rate_limited";
+          error.retryAfterSeconds = error.retryAfterSeconds ||
+            Math.ceil(cooldownMs / 1000);
+          throw error;
+        }
+
+        if (error?.status) throw error;
+
         if (          attempt < MAX_RETRIES &&
           failureStatus === "unavailable"
         ) {
@@ -763,6 +819,7 @@ function providerStatus(provider, result) {
       status: result.status,
       httpStatus: result.httpStatus ?? null,
       message: result.message || "",
+      retryAfterSeconds: result.retryAfterSeconds ?? null,
       cache: result.cache || "none"
     };
   }
@@ -1149,6 +1206,50 @@ function decodeWordUint(raw) {
   }
 }
 
+function extractPushedSelectors(bytecode) {
+  if (typeof bytecode !== "string" || !/^0x[0-9a-f]*$/i.test(bytecode)) {
+    return [];
+  }
+
+  const hex = bytecode.slice(2).toLowerCase();
+  const selectors = new Set();
+
+  // Walk EVM instructions so PUSH4 data is not confused with embedded bytes
+  // inside other PUSH instructions.
+  for (let offset = 0; offset + 2 <= hex.length;) {
+    const opcode = Number.parseInt(hex.slice(offset, offset + 2), 16);
+
+    if (opcode >= 0x60 && opcode <= 0x7f) {
+      const pushBytes = opcode - 0x5f;
+      const dataStart = offset + 2;
+      const dataEnd = dataStart + pushBytes * 2;
+      if (dataEnd > hex.length) break;
+
+      if (opcode === 0x63) {
+        selectors.add(hex.slice(dataStart, dataEnd));
+      }
+
+      offset = dataEnd;
+    } else {
+      offset += 2;
+    }
+  }
+
+  return [...selectors];
+}
+
+const ERC20_DISPATCH_SELECTORS = {
+  "06fdde03": "name",
+  "95d89b41": "symbol",
+  "313ce567": "decimals",
+  "18160ddd": "totalSupply",
+  "70a08231": "balanceOf",
+  "a9059cbb": "transfer",
+  "dd62ed3e": "allowance",
+  "095ea7b3": "approve",
+  "23b872dd": "transferFrom"
+};
+
 async function scanContractOnChain(address, chainId, env, findings) {
   const call = async selector => {
     try {
@@ -1230,6 +1331,11 @@ async function scanContractOnChain(address, chainId, env, findings) {
       "good",
       0
     );
+
+    const targetSelectors = extractPushedSelectors(code);
+    const targetErc20Selectors = targetSelectors
+      .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
+      .map(selector => ERC20_DISPATCH_SELECTORS[selector]);
 
     const [nameRaw, symbolRaw, decimalsRaw, supplyRaw, ownerRaw, getOwnerRaw, pausedRaw,
       implementationRaw, adminRaw, beaconRaw] = await Promise.all([
@@ -1315,7 +1421,7 @@ async function scanContractOnChain(address, chainId, env, findings) {
 
     // EIP-1167 minimal clones embed their fixed implementation address in runtime code.
     const cloneMatch = code.match(
-      /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3$/i
+      /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3/i
     );
     const cloneImplementation = cloneMatch
       ? "0x" + cloneMatch[1]
@@ -1339,6 +1445,7 @@ async function scanContractOnChain(address, chainId, env, findings) {
       implementation || beaconImplementation || cloneImplementation;
     let implementationCodeBytes = null;
     let implementationHasCode = null;
+    let implementationErc20Selectors = [];
     let uupsProxiableUUID = null;
 
     if (resolvedImplementation) {
@@ -1353,6 +1460,9 @@ async function scanContractOnChain(address, chainId, env, findings) {
             /^0x[0-9a-f]*$/i.test(implementationCode)) {
           implementationCodeBytes = Math.max(0, (implementationCode.length - 2) / 2);
           implementationHasCode = implementationCodeBytes > 0;
+          implementationErc20Selectors = extractPushedSelectors(implementationCode)
+            .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
+            .map(selector => ERC20_DISPATCH_SELECTORS[selector]);
         }
       } catch (_) {}
 
@@ -1367,6 +1477,21 @@ async function scanContractOnChain(address, chainId, env, findings) {
         uupsProxiableUUID = /^0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc$/i.test(uuidRaw || "");
       } catch (_) {}
     }
+
+    const allErc20Selectors = [...new Set([
+      ...targetErc20Selectors,
+      ...implementationErc20Selectors
+    ])];
+
+    addFinding(
+      findings,
+      "Contract bytecode interface fingerprint",
+      allErc20Selectors.length >= 3
+        ? `Runtime bytecode exposes ${allErc20Selectors.length} common ERC-20 dispatch selectors (${allErc20Selectors.join(", ")}). Selector presence is a heuristic and does not prove standard-compliant behavior.`
+        : `Only ${allErc20Selectors.length} common ERC-20 dispatch selector(s) were detected. No standard ERC-20 metadata was decoded; this may be a non-token contract, a custom dispatcher, or a proxy whose implementation needs separate inspection.`,
+      "neutral",
+      0
+    );
 
     const proxyType = implementation
       ? "eip1967"
@@ -1463,6 +1588,11 @@ async function scanContractOnChain(address, chainId, env, findings) {
         implementationCodeBytes: implementationCodeBytes,
         implementationHasCode: implementationHasCode,
         uupsProxiableUUID: uupsProxiableUUID
+      },
+      interfaceFingerprint: {
+        erc20Selectors: allErc20Selectors,
+        targetSelectorCount: targetSelectors.length,
+        implementationSelectorCount: implementationErc20Selectors.length
       }
     };
   } catch (error) {
@@ -2412,9 +2542,9 @@ async function handleScan(request, env) {
   const sources = [];
   const jobs = [];
 
-  const runGoPlus = async (key, url, onSuccess) => {
+  const runGoPlus = async (key, url, onSuccess, providerOptions = {}) => {
     try {
-      const result = await cachedProviderGet("goplus", url, env);
+      const result = await cachedProviderGet("goplus", url, env, providerOptions);
 
       providers[key] = providerStatus("GoPlus", result);
       sources.push(`GoPlus ${key}`);
@@ -2441,7 +2571,10 @@ async function handleScan(request, env) {
         provider: "GoPlus",
         status: e.status || "error",
         httpStatus: e.httpStatus || null,
-        message: e.message || "Provider request failed",
+        message: e.retryAfterSeconds
+          ? `${e.message || "Provider rate limited"} (retry after approximately ${e.retryAfterSeconds}s)`
+          : (e.message || "Provider request failed"),
+        retryAfterSeconds: e.retryAfterSeconds || null,
         cache: "none"
       };
 
@@ -2520,7 +2653,8 @@ async function handleScan(request, env) {
       runGoPlus(
         "token_security",
         `${GOPLUS_API}/api/v1/token_security/${chainId}?contract_addresses=${address.toLowerCase()}`,
-        data => summarizeTokenRisk(data, findings)
+        data => summarizeTokenRisk(data, findings),
+        { ttl: 300, rateLimitScope: "token_security" }
       )
     );
 
