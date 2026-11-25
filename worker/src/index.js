@@ -43,7 +43,15 @@ function cooldownKvKey(cooldownKey) {
 
 async function getProviderCooldownUntil(cooldownKey, env) {
   const localUntil = PROVIDER_COOLDOWNS.get(cooldownKey) || 0;
-  if (localUntil > Date.now()) return localUntil;
+  if (localUntil > Date.now()) {
+    console.info("[goplus-cooldown] read_hit", {
+      scope: cooldownKey,
+      source: "isolate_memory",
+      remainingSeconds: Math.ceil((localUntil - Date.now()) / 1000)
+    });
+    return localUntil;
+  }
+
   const kv = env?.GOPLUS_COOLDOWNS;
   if (kv && typeof kv.get === "function") {
     try {
@@ -51,11 +59,28 @@ async function getProviderCooldownUntil(cooldownKey, env) {
       const sharedUntil = Number(stored);
       if (Number.isFinite(sharedUntil) && sharedUntil > Date.now()) {
         PROVIDER_COOLDOWNS.set(cooldownKey, sharedUntil);
+        console.info("[goplus-cooldown] read_hit", {
+          scope: cooldownKey,
+          source: "cloudflare_kv",
+          remainingSeconds: Math.ceil((sharedUntil - Date.now()) / 1000)
+        });
         return sharedUntil;
       }
-    } catch (_) {
-      // KV failure must not interrupt contract scanning.
+      console.info("[goplus-cooldown] read_miss", {
+        scope: cooldownKey,
+        source: "cloudflare_kv",
+        bindingAvailable: true
+      });
+    } catch (error) {
+      console.warn("[goplus-cooldown] read_error", {
+        scope: cooldownKey,
+        message: String(error?.message || error).slice(0, 160)
+      });
     }
+  } else {
+    console.warn("[goplus-cooldown] binding_unavailable", {
+      scope: cooldownKey
+    });
   }
   return 0;
 }
@@ -70,9 +95,20 @@ async function setProviderCooldown(cooldownKey, cooldownMs, env) {
       await kv.put(cooldownKvKey(cooldownKey), String(until), {
         expirationTtl: ttlSeconds
       });
-    } catch (_) {
-      // Preserve local cooldown when the shared KV write fails.
+      console.info("[goplus-cooldown] write_success", {
+        scope: cooldownKey,
+        ttlSeconds
+      });
+    } catch (error) {
+      console.warn("[goplus-cooldown] write_error", {
+        scope: cooldownKey,
+        message: String(error?.message || error).slice(0, 160)
+      });
     }
+  } else {
+    console.warn("[goplus-cooldown] binding_unavailable", {
+      scope: cooldownKey
+    });
   }
   return until;
 }
