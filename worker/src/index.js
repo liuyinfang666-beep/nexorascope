@@ -387,6 +387,7 @@ async function cachedProviderGet(
           if (failureStatus === "rate_limited" && cooldownKey) {
             const cooldownMs = retryAfterMilliseconds(response);
             PROVIDER_COOLDOWNS.set(cooldownKey, Date.now() + cooldownMs);
+            err.retryAfterMs = cooldownMs;
             err.retryAfterSeconds = Math.ceil(cooldownMs / 1000);
             throw err;
           }
@@ -447,7 +448,7 @@ async function cachedProviderGet(
 
         if (failureStatus === "rate_limited" && cooldownKey) {
           const cooldownMs = error?.retryAfterMs ||
-            GOPLUS_DEFAULT_COOLDOWN_MS;
+            (error?.retryAfterSeconds ? error.retryAfterSeconds * 1000 : GOPLUS_DEFAULT_COOLDOWN_MS);
           PROVIDER_COOLDOWNS.set(cooldownKey, Date.now() + cooldownMs);
           error.status = "rate_limited";
           error.retryAfterSeconds = error.retryAfterSeconds ||
