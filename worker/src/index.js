@@ -1910,6 +1910,10 @@ async function scanContractOnChain(address, chainId, env, findings) {
             status: selectorHistory.status,
             message: selectorHistory.message,
             transactionCount: selectorHistory.transactionCount,
+            historySource: selectorHistory.historySource || null,
+            directTransactionCount: selectorHistory.directTransactionCount ?? null,
+            internalTransactionCount: selectorHistory.internalTransactionCount ?? null,
+            internalHistoryStatus: selectorHistory.internalHistoryStatus || null,
             observedSelectors: selectorHistory.selectors || []
           },
           checkedSelectorCount: selectorRoutedImplementations.length,
