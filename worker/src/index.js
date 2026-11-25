@@ -1207,6 +1207,113 @@ function decodeWordUint(raw) {
   }
 }
 
+// Ethereum Keccak-256 (not NIST SHA3-256). Used to derive storage keys for
+// selector-routed proxy dispatch tables. Input is intentionally bounded.
+function keccak256Hex(inputBytes) {
+  const MASK = (1n << 64n) - 1n;
+  const RC = [
+    0x0000000000000001n, 0x0000000000008082n, 0x800000000000808an,
+    0x8000000080008000n, 0x000000000000808bn, 0x0000000080000001n,
+    0x8000000080008081n, 0x8000000000008009n, 0x000000000000008an,
+    0x0000000000000088n, 0x0000000080008009n, 0x000000008000000an,
+    0x000000008000808bn, 0x800000000000008bn, 0x8000000000008089n,
+    0x8000000000008003n, 0x8000000000008002n, 0x8000000000000080n,
+    0x000000000000800an, 0x800000008000000an, 0x8000000080008081n,
+    0x8000000000008080n, 0x0000000080000001n, 0x8000000080008008n
+  ];
+  const ROT = [
+    0, 1, 62, 28, 27,
+    36, 44, 6, 55, 20,
+    3, 10, 43, 25, 39,
+    41, 45, 15, 21, 8,
+    18, 2, 61, 56, 14
+  ];
+  const rotl = (x, n) => n === 0 ? x : ((x << BigInt(n)) | (x >> BigInt(64 - n))) & MASK;
+  const bytes = Array.from(inputBytes);
+  const rate = 136;
+  bytes.push(0x01);
+  while (bytes.length % rate !== rate - 1) bytes.push(0);
+  bytes.push(0x80);
+  const state = Array(25).fill(0n);
+
+  for (let block = 0; block < bytes.length; block += rate) {
+    for (let i = 0; i < rate; i++) {
+      const lane = Math.floor(i / 8);
+      state[lane] ^= BigInt(bytes[block + i]) << BigInt((i % 8) * 8);
+    }
+    for (const roundConstant of RC) {
+      const c = Array(5).fill(0n);
+      const d = Array(5).fill(0n);
+      for (let x = 0; x < 5; x++) {
+        c[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
+      }
+      for (let x = 0; x < 5; x++) {
+        d[x] = c[(x + 4) % 5] ^ rotl(c[(x + 1) % 5], 1);
+      }
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) state[x + 5 * y] ^= d[x];
+      }
+
+      const b = Array(25).fill(0n);
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) {
+          const newX = y;
+          const newY = (2 * x + 3 * y) % 5;
+          b[newX + 5 * newY] = rotl(state[x + 5 * y], ROT[x + 5 * y]);
+        }
+      }
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) {
+          state[x + 5 * y] = b[x + 5 * y] ^
+            ((~b[(x + 1) % 5 + 5 * y]) & b[(x + 2) % 5 + 5 * y]);
+        }
+      }
+      state[0] ^= roundConstant;
+    }
+  }
+
+  const output = [];
+  for (let i = 0; i < 32; i++) {
+    const lane = Math.floor(i / 8);
+    output.push(Number((state[lane] >> BigInt((i % 8) * 8)) & 0xffn));
+  }
+  return "0x" + output.map(v => v.toString(16).padStart(2, "0")).join("");
+}
+
+function selectorStorageSlot(selector, salt) {
+  if (!/^[0-9a-f]{8}$/i.test(selector || "") ||
+      !/^0x[0-9a-f]{64}$/i.test(salt || "")) return null;
+  // The observed dispatcher hashes two 32-byte memory words:
+  // bytes4 selector left-aligned in word 0, followed by the bytes32 salt.
+  const encoded = selector.toLowerCase().padEnd(64, "0") + salt.slice(2).toLowerCase();
+  const bytes = encoded.match(/.{2}/g).map(x => parseInt(x, 16));
+  return keccak256Hex(bytes);
+}
+
+function detectSelectorRoutedProxySalt(bytecode) {
+  if (typeof bytecode !== "string" || !/^0x[0-9a-f]*$/i.test(bytecode)) return [];
+  const hex = bytecode.slice(2).toLowerCase();
+  const salts = new Set();
+  // Walk opcodes (rather than searching arbitrary hex) so constants embedded
+  // inside PUSH data cannot be mistaken for executable dispatcher instructions.
+  for (let offset = 0; offset + 2 <= hex.length;) {
+    const opcode = Number.parseInt(hex.slice(offset, offset + 2), 16);
+    if (opcode >= 0x60 && opcode <= 0x7f) {
+      const pushBytes = opcode - 0x5f;
+      const dataStart = offset + 2;
+      const dataEnd = dataStart + pushBytes * 2;
+      if (dataEnd > hex.length) break;
+      if (opcode === 0x7f && hex.slice(dataEnd, dataEnd + 16) === "6020526040902054") {
+        salts.add("0x" + hex.slice(dataStart, dataEnd));
+      }
+      offset = dataEnd;
+    } else {
+      offset += 2;
+    }
+  }
+  return [...salts];
+}
+
 function extractPushedSelectors(bytecode) {
   if (typeof bytecode !== "string" || !/^0x[0-9a-f]*$/i.test(bytecode)) {
     return [];
@@ -1337,6 +1444,7 @@ async function scanContractOnChain(address, chainId, env, findings) {
     const targetErc20Selectors = targetSelectors
       .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
       .map(selector => ERC20_DISPATCH_SELECTORS[selector]);
+    const selectorProxySalts = detectSelectorRoutedProxySalt(code);
 
     const [nameRaw, symbolRaw, decimalsRaw, supplyRaw, ownerRaw, getOwnerRaw, pausedRaw,
       implementationRaw, adminRaw, beaconRaw] = await Promise.all([
@@ -1420,6 +1528,62 @@ async function scanContractOnChain(address, chainId, env, findings) {
     const admin = decodeWordAddress(adminRaw);
     const beacon = decodeWordAddress(beaconRaw);
 
+    // Some compact/custom proxies route each function selector to a separate
+    // implementation stored at keccak256(abi.encode(selector, salt)).
+    // Read only the bounded common ERC-20 selector set; never infer safety from
+    // a non-zero slot, and verify that every resolved implementation has code.
+    const selectorRoutedImplementations = [];
+    const selectorImplementationAddresses = new Set();
+    if (selectorProxySalts.length) {
+      const salt = selectorProxySalts[0];
+      const selectorEntries = Object.entries(ERC20_DISPATCH_SELECTORS);
+      const slotReads = await Promise.all(selectorEntries.map(async ([selector, functionName]) => {
+        const slot = selectorStorageSlot(selector, salt);
+        try {
+          const raw = await chainRpcRequest(env, chainId, "eth_getStorageAt", [address, slot, "latest"]);
+          const implementationAddress = decodeWordAddress(raw);
+          if (implementationAddress) selectorImplementationAddresses.add(implementationAddress.toLowerCase());
+          return { selector: "0x" + selector, functionName, storageSlot: slot,
+            implementation: implementationAddress, status: implementationAddress ? "address_found" : "empty_slot" };
+        } catch (error) {
+          return { selector: "0x" + selector, functionName, storageSlot: slot,
+            implementation: null, status: error?.status || "read_error",
+            message: String(error?.message || "Storage read failed").slice(0, 160) };
+        }
+      }));
+      const codeChecks = new Map();
+      await Promise.all([...selectorImplementationAddresses].map(async implementationAddress => {
+        try {
+          const implementationCode = await chainRpcRequest(env, chainId, "eth_getCode",
+            [implementationAddress, "latest"]);
+          const validCode = typeof implementationCode === "string" && /^0x[0-9a-f]*$/i.test(implementationCode);
+          codeChecks.set(implementationAddress, {
+            codeBytes: validCode ? Math.max(0, (implementationCode.length - 2) / 2) : null,
+            selectors: validCode ? extractPushedSelectors(implementationCode)
+              .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
+              .map(selector => ERC20_DISPATCH_SELECTORS[selector]) : [],
+            hasCode: validCode && implementationCode.length > 2
+          });
+        } catch (error) {
+          codeChecks.set(implementationAddress, {
+            codeBytes: null, selectors: [], hasCode: null,
+            failureType: error?.status || "error"
+          });
+        }
+      }));
+      for (const entry of slotReads) {
+        const check = entry.implementation
+          ? codeChecks.get(entry.implementation.toLowerCase())
+          : null;
+        selectorRoutedImplementations.push({
+          ...entry,
+          implementationCodeBytes: check?.codeBytes ?? null,
+          implementationHasCode: check?.hasCode ?? null,
+          implementationErc20Selectors: check?.selectors ?? []
+        });
+      }
+    }
+
     // EIP-1167 minimal clones embed their fixed implementation address in runtime code.
     const cloneMatch = code.match(
       /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3/i
@@ -1479,9 +1643,13 @@ async function scanContractOnChain(address, chainId, env, findings) {
       } catch (_) {}
     }
 
+    const selectorRoutedErc20Selectors = selectorRoutedImplementations
+      .filter(entry => entry.implementationHasCode === true)
+      .flatMap(entry => entry.implementationErc20Selectors);
     const allErc20Selectors = [...new Set([
       ...targetErc20Selectors,
-      ...implementationErc20Selectors
+      ...implementationErc20Selectors,
+      ...selectorRoutedErc20Selectors
     ])];
 
     addFinding(
@@ -1500,7 +1668,9 @@ async function scanContractOnChain(address, chainId, env, findings) {
         ? "eip1967_beacon"
         : cloneImplementation
           ? "eip1167_minimal_clone"
-          : "not_detected";
+          : selectorProxySalts.length
+            ? "custom_selector_routed"
+            : "not_detected";
 
     if (implementation) {
       addFinding(
@@ -1541,6 +1711,22 @@ async function scanContractOnChain(address, chainId, env, findings) {
           cloneImplementation + ". Trailing bytes may contain immutable clone data; this is a bytecode-pattern heuristic, and the implementation still requires review.",
         "warn",
         5
+      );
+    }
+    if (selectorProxySalts.length) {
+      const mapped = selectorRoutedImplementations.filter(entry => entry.implementation).length;
+      const verified = selectorRoutedImplementations.filter(entry => entry.implementationHasCode === true).length;
+      const missingCode = selectorRoutedImplementations.filter(entry => entry.implementationHasCode === false).length;
+      addFinding(
+        findings,
+        "Custom selector-routed proxy",
+        "Runtime bytecode contains a selector-keyed storage dispatcher pattern. Checked " +
+          selectorRoutedImplementations.length + " common ERC-20 selector slots: " +
+          mapped + " mapped address(es), " + verified + " implementation(s) with code" +
+          (missingCode ? ", and " + missingCode + " mapped address(es) without code" : "") +
+          ". This is pattern-based detection; mappings and implementation behavior require manual review.",
+        missingCode ? "warn" : "neutral",
+        missingCode ? 8 : 0
       );
     }
     if (resolvedImplementation && implementationHasCode === false) {
@@ -1588,12 +1774,20 @@ async function scanContractOnChain(address, chainId, env, findings) {
         beaconImplementation: beaconImplementation,
         implementationCodeBytes: implementationCodeBytes,
         implementationHasCode: implementationHasCode,
-        uupsProxiableUUID: uupsProxiableUUID
+        uupsProxiableUUID: uupsProxiableUUID,
+        selectorRouted: selectorProxySalts.length > 0 ? {
+          storageSalt: selectorProxySalts[0],
+          detection: "bytecode_pattern_heuristic",
+          checkedSelectorCount: selectorRoutedImplementations.length,
+          mappedSelectorCount: selectorRoutedImplementations.filter(entry => entry.implementation).length,
+          selectorImplementations: selectorRoutedImplementations
+        } : null
       },
       interfaceFingerprint: {
         erc20Selectors: allErc20Selectors,
         targetSelectorCount: targetSelectors.length,
-        implementationSelectorCount: implementationErc20Selectors.length
+        implementationSelectorCount: implementationErc20Selectors.length,
+        selectorRoutedImplementationCount: selectorRoutedImplementations.filter(entry => entry.implementationHasCode === true).length
       }
     };
   } catch (error) {
