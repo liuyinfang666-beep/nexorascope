@@ -1209,10 +1209,10 @@ async function scanContractOnChain(address, chainId, env, findings) {
 
     let codeHash = null;
     try {
-      const digest = await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(code.toLowerCase())
+      const bytecode = Uint8Array.from(
+        code.slice(2).match(/.{2}/g).map(byte => parseInt(byte, 16))
       );
+      const digest = await crypto.subtle.digest("SHA-256", bytecode);
       codeHash = Array.from(new Uint8Array(digest))
         .map(byte => byte.toString(16).padStart(2, "0"))
         .join("");
