@@ -2100,6 +2100,40 @@ async function handleScan(request, env) {
             );
           }
 
+          const coreFields = [
+            "is_honeypot",
+            "cannot_buy",
+            "cannot_sell_all",
+            "is_mintable",
+            "is_blacklisted",
+            "transfer_pausable",
+            "slippage_modifiable",
+            "is_open_source",
+            "buy_tax",
+            "sell_tax"
+          ];
+          const checkedCoreCount = coreFields.filter(key =>
+            matchedRecord[key] !== undefined &&
+            matchedRecord[key] !== null &&
+            matchedRecord[key] !== ""
+          ).length;
+          const minimumCoreCoverage = 5;
+
+          providers.token_security.checkedCount = checkedCoreCount;
+          providers.token_security.candidateCount = coreFields.length;
+          providers.token_security.incomplete = checkedCoreCount < minimumCoreCoverage;
+          providers.token_security.message = providers.token_security.incomplete
+            ? `Only ${checkedCoreCount} of ${coreFields.length} core token checks returned data. The report is incomplete; missing fields remain unknown.`
+            : `${checkedCoreCount} of ${coreFields.length} core token checks returned data.`;
+
+          addFinding(
+            findings,
+            "Token security data coverage",
+            providers.token_security.message,
+            providers.token_security.incomplete ? "neutral" : "good",
+            0
+          );
+
           summarizeTokenRisk(
             { result: { [address.toLowerCase()]: matchedRecord } },
             findings
@@ -2233,7 +2267,8 @@ async function handleScan(request, env) {
   ).length;
 
   const hasIncompleteDiscovery =
-    providers.erc20_onchain_discovery?.incomplete === true;
+    providers.erc20_onchain_discovery?.incomplete === true ||
+    providers.token_security?.incomplete === true;
 
   const overallStatus =
     successful === requiredProviderValues.length &&
@@ -2245,7 +2280,11 @@ async function handleScan(request, env) {
         : "unavailable";
 
   const contractCoreCheckSuccessful =
-    mode !== "contract" || providers.token_security?.status === "success";
+    mode !== "contract" ||
+    (
+      providers.token_security?.status === "success" &&
+      providers.token_security?.incomplete !== true
+    );
   const score = contractCoreCheckSuccessful
     ? scoreFindings(findings)
     : null;
