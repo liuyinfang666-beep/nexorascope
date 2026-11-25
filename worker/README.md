@@ -1,4 +1,4 @@
-# NexoraScope Security Worker v2
+# NexoraScope Security Worker
 
 ## Routes
 - `POST /api/scan` — wallet or contract scan.
@@ -6,22 +6,26 @@
 
 ## Request
 ```json
-{ "mode": "wallet", "chainId": "1", "address": "0x..." }
+{ "mode": "contract", "chainId": "1", "address": "0x..." }
 ```
-`mode` is `wallet` or `contract`; supported chain IDs are `1`, `56`, and `8453`.
+`mode` is `wallet` or `contract`; supported chain IDs are `1` (Ethereum), `56` (BNB Chain), and `8453` (Base).
 
-## v2 response additions
-- `schemaVersion: 2`, `overallStatus`, `providers`, and `approvals`.
-- Provider states: `success`, `rate_limited`, `auth_error`, `quota_exceeded`, `unavailable`, `error`, `unknown`.
-- `score: null` means insufficient positive weighted evidence; it is not a zero-risk score.
-- Approval records expose best-effort `standard`, `token`, `tokenAddress`, `spender`, `allowance`, `tokenId`, `risky`, and `rawRisk`. Missing fields remain blank.
+## Response
+- `schemaVersion: 3`, `overallStatus`, `providers`, `findings`, and `approvals`.
+- Provider states distinguish success, partial or unavailable upstream results, rate limits, authentication errors, and quota errors.
+- Contract scans validate that GoPlus returned a successful response and a record for the exact requested contract address.
+- Contract reports track coverage across 10 core checks. Fewer than 5 returned core fields marks the scan incomplete and suppresses the numeric score.
+- A missing field is unknown, not a negative risk finding. A numeric indicator score is not a probability, audit grade, or guarantee of safety.
+- Explorer source verification only indicates that the explorer reports verified source metadata. It is not a security audit; proxy implementations and privileged controls still require review.
+- Wallet approval discovery may be paginated or incomplete. Missing log or allowance data must not be interpreted as proof that no approvals exist.
 
-The Worker allows browser requests from `https://nexorascope.xyz` and `https://www.nexorascope.xyz` via CORS. If your Pages preview uses another hostname, add that exact origin to the allowlist before testing the preview.
+## CORS
+The Worker allows browser requests from `https://nexorascope.xyz` and `https://www.nexorascope.xyz`. Pages preview hostnames matching `*.nexorascope.pages.dev` are also allowed.
 
 ## Secrets
 Set `ETHERSCAN_API_KEY` as a Worker secret. `GOPLUS_TOKEN` is optional and should only be set if your GoPlus account provides a token. Never place secrets in frontend files or commit them to GitHub.
 
 ## Caching / limits
-Successful GoPlus responses are cached for 45 seconds and Etherscan source metadata for 120 seconds. Failed responses are not cached as successful data. Identical in-flight requests are coalesced within a Worker isolate. One bounded retry is attempted for rate-limited/transient upstream failures. Cache API is best-effort and does not provide a global lock across all isolates.
+Successful GoPlus responses are cached for 45 seconds and Etherscan source metadata for 120 seconds. Failed responses are not cached as successful data. Identical in-flight requests are coalesced within a Worker isolate. Transient upstream failures may be retried. Cache API is best-effort and does not provide a global lock across all isolates.
 
-The GoPlus response schema can vary by endpoint and chain. The approval normalizer is intentionally conservative; compare it with real provider payloads before treating the table as exhaustive.
+The GoPlus response schema can vary by endpoint and chain. Compare the report with real provider payloads on every supported chain before treating it as production-validated.
