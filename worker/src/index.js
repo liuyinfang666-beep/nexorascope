@@ -33,50 +33,17 @@ function retryAfterMilliseconds(response, fallbackMs = GOPLUS_DEFAULT_COOLDOWN_M
   return fallbackMs;
 }
 
-// Keep GoPlus cooldowns in the edge cache as well as the isolate-local map.
-// Cloudflare's Cache API is data-center scoped, so this reduces repeated
-// requests within a POP but is not a globally shared quota coordinator.
+// Keep GoPlus cooldowns in this Worker isolate only.
+// This avoids relying on Cache API keys that may not belong to a zone
+// controlled by this Worker. Cooldowns are not shared across isolates.
 async function getProviderCooldownUntil(cooldownKey) {
   const localUntil = PROVIDER_COOLDOWNS.get(cooldownKey) || 0;
-  if (localUntil > Date.now()) return localUntil;
-
-  try {
-    if (typeof caches !== "undefined" && caches.default) {
-      const key = cacheKeyFor(`provider-cooldown:${cooldownKey}`);
-      const hit = await caches.default.match(key);
-      if (hit) {
-        const payload = await hit.json();
-        const cachedUntil = Number(payload?.until || 0);
-        if (cachedUntil > Date.now()) {
-          PROVIDER_COOLDOWNS.set(cooldownKey, cachedUntil);
-          return cachedUntil;
-        }
-      }
-    }
-  } catch (_) {}
-
-  return 0;
+  return localUntil > Date.now() ? localUntil : 0;
 }
 
 async function setProviderCooldown(cooldownKey, cooldownMs) {
   const until = Date.now() + cooldownMs;
   PROVIDER_COOLDOWNS.set(cooldownKey, until);
-
-  try {
-    if (typeof caches !== "undefined" && caches.default) {
-      const key = cacheKeyFor(`provider-cooldown:${cooldownKey}`);
-      await caches.default.put(
-        key,
-        new Response(JSON.stringify({ until }), {
-          headers: {
-            "content-type": "application/json",
-            "cache-control": `public, max-age=${Math.max(1, Math.ceil(cooldownMs / 1000))}`
-          }
-        })
-      );
-    }
-  } catch (_) {}
-
   return until;
 }
 
