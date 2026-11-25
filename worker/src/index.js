@@ -58,7 +58,8 @@ function withCors(response, request) {
 
   const allowed = new Set([
     "https://nexorascope.xyz",
-    "https://www.nexorascope.xyz"
+    "https://www.nexorascope.xyz",
+    "https://nexorascope.pages.dev"
   ]);
 
   const isNexoraPreview =
