@@ -1358,6 +1358,64 @@ const ERC20_DISPATCH_SELECTORS = {
   "23b872dd": "transferFrom"
 };
 
+async function getRecentTransactionSelectors(address, chainId, env) {
+  if (!env.ETHERSCAN_API_KEY) {
+    return { status: "unavailable", message: "ETHERSCAN_API_KEY is not configured", selectors: [], transactionCount: 0 };
+  }
+
+  const url = new URL(ETHERSCAN_API);
+  url.search = new URLSearchParams({
+    chainid: String(chainId),
+    module: "account",
+    action: "txlist",
+    address,
+    startblock: "0",
+    endblock: "99999999",
+    page: "1",
+    offset: "100",
+    sort: "desc",
+    apikey: env.ETHERSCAN_API_KEY
+  });
+
+  try {
+    const result = await cachedProviderGet("etherscan", url.toString(), env, { ttl: 180 });
+    const data = result.data;
+    if (String(data?.status) === "0") {
+      const message = String(data?.result || data?.message || "Explorer returned no transaction history");
+      if (/no transactions found/i.test(message)) {
+        return { status: "success", message, selectors: [], transactionCount: 0, cache: result.cache || "none" };
+      }
+      return { status: classifyFailure(result.httpStatus || 200, message), message, selectors: [], transactionCount: 0, cache: result.cache || "none" };
+    }
+
+    const transactions = Array.isArray(data?.result) ? data.result : [];
+    const selectorSet = new Set();
+    for (const tx of transactions) {
+      if (String(tx?.isError || "0") === "1") continue;
+      const input = String(tx?.input || "").toLowerCase();
+      if (!/^0x[0-9a-f]{8,}$/.test(input)) continue;
+      const selector = input.slice(2, 10);
+      if (selector !== "00000000") selectorSet.add(selector);
+      if (selectorSet.size >= 32) break;
+    }
+
+    return {
+      status: "success",
+      message: "Recent successful direct transactions inspected for function selectors",
+      selectors: [...selectorSet],
+      transactionCount: transactions.length,
+      cache: result.cache || "none"
+    };
+  } catch (error) {
+    return {
+      status: error?.status || "error",
+      message: String(error?.message || "Explorer transaction history request failed").slice(0, 200),
+      selectors: [],
+      transactionCount: 0
+    };
+  }
+}
+
 async function scanContractOnChain(address, chainId, env, findings) {
   const call = async selector => {
     try {
@@ -1445,6 +1503,9 @@ async function scanContractOnChain(address, chainId, env, findings) {
       .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
       .map(selector => ERC20_DISPATCH_SELECTORS[selector]);
     const selectorProxySalts = detectSelectorRoutedProxySalt(code);
+    const selectorHistory = selectorProxySalts.length
+      ? await getRecentTransactionSelectors(address, chainId, env)
+      : { status: "not_needed", message: "No selector-routed dispatcher pattern detected", selectors: [], transactionCount: 0 };
 
     const [nameRaw, symbolRaw, decimalsRaw, supplyRaw, ownerRaw, getOwnerRaw, pausedRaw,
       implementationRaw, adminRaw, beaconRaw] = await Promise.all([
@@ -1536,7 +1597,11 @@ async function scanContractOnChain(address, chainId, env, findings) {
     const selectorImplementationAddresses = new Set();
     if (selectorProxySalts.length) {
       const salt = selectorProxySalts[0];
-      const selectorEntries = Object.entries(ERC20_DISPATCH_SELECTORS);
+      const selectorNames = { ...ERC20_DISPATCH_SELECTORS };
+      for (const selector of selectorHistory.selectors || []) {
+        if (!selectorNames[selector]) selectorNames[selector] = "observed_" + selector;
+      }
+      const selectorEntries = Object.entries(selectorNames).slice(0, 41);
       const slotReads = await Promise.all(selectorEntries.map(async ([selector, functionName]) => {
         const slot = selectorStorageSlot(selector, salt);
         try {
@@ -1721,9 +1786,12 @@ async function scanContractOnChain(address, chainId, env, findings) {
         findings,
         "Custom selector-routed proxy",
         "Runtime bytecode contains a selector-keyed storage dispatcher pattern. Checked " +
-          selectorRoutedImplementations.length + " common ERC-20 selector slots: " +
+          selectorRoutedImplementations.length + " selector slots (" +
+          Object.keys(ERC20_DISPATCH_SELECTORS).length + " common ERC-20 selectors plus " +
+          (selectorHistory.selectors || []).length + " observed transaction selectors): " +
           mapped + " mapped address(es), " + verified + " implementation(s) with code" +
           (missingCode ? ", and " + missingCode + " mapped address(es) without code" : "") +
+          ". Transaction-history discovery status: " + selectorHistory.status +
           ". This is pattern-based detection; mappings and implementation behavior require manual review.",
         missingCode ? "warn" : "neutral",
         missingCode ? 8 : 0
@@ -1778,6 +1846,12 @@ async function scanContractOnChain(address, chainId, env, findings) {
         selectorRouted: selectorProxySalts.length > 0 ? {
           storageSalt: selectorProxySalts[0],
           detection: "bytecode_pattern_heuristic",
+          history: {
+            status: selectorHistory.status,
+            message: selectorHistory.message,
+            transactionCount: selectorHistory.transactionCount,
+            observedSelectors: selectorHistory.selectors || []
+          },
           checkedSelectorCount: selectorRoutedImplementations.length,
           mappedSelectorCount: selectorRoutedImplementations.filter(entry => entry.implementation).length,
           selectorImplementations: selectorRoutedImplementations
