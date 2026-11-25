@@ -2943,6 +2943,37 @@ async function handleScan(request, env) {
         parsedRecordCount: collectRecordObjects(data).length
       };
 
+      // HTTP 200 / code 1 only confirms the GoPlus API request succeeded.
+      // An empty token_security result contains no contract risk indicators
+      // and must never be scored as a successful security check.
+      if (
+        key === "token_security" &&
+        (
+          !data ||
+          typeof data !== "object" ||
+          Array.isArray(data) ||
+          Object.keys(data).length === 0 ||
+          !Object.values(data).some(
+            value => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0
+          )
+        )
+      ) {
+        providers[key] = {
+          ...providers[key],
+          status: "no_data",
+          incomplete: true,
+          message: "GoPlus returned a successful HTTP response but no token-security record for this contract."
+        };
+        addFinding(
+          findings,
+          "token_security data unavailable",
+          "GoPlus returned code 1 / OK, but its result contained no token-security record. No risk indicators can be scored from this response.",
+          "neutral",
+          0
+        );
+        return;
+      }
+
       await onSuccess(result.data);
 
     } catch (e) {
