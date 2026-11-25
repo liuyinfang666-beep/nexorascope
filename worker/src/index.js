@@ -1803,8 +1803,8 @@ async function scanContractOnChain(address, chainId, env, findings) {
       findings,
       "Contract bytecode interface fingerprint",
       allErc20Selectors.length >= 3
-        ? `Runtime bytecode exposes ${allErc20Selectors.length} common ERC-20 dispatch selectors (${allErc20Selectors.join(", ")}). Selector presence is a heuristic and does not prove standard-compliant behavior.`
-        : `Only ${allErc20Selectors.length} common ERC-20 dispatch selector(s) were detected. No standard ERC-20 metadata was decoded; this may be a non-token contract, a custom dispatcher, or a proxy whose implementation needs separate inspection.`,
+        ? `Across the target contract and code-verified implementation bytecode, ${allErc20Selectors.length} common ERC-20 dispatch selectors were detected (${allErc20Selectors.join(", ")}). For selector-routed proxies, these may come from delegated implementation contracts rather than the target runtime itself. Selector presence is a heuristic and does not prove standard-compliant behavior.`
+        : `Across the target contract and code-verified implementation bytecode, only ${allErc20Selectors.length} common ERC-20 dispatch selector(s) were detected. No standard ERC-20 metadata was decoded; this may be a non-token contract, a custom dispatcher, or a proxy whose implementation needs separate inspection.`,
       "neutral",
       0
     );
