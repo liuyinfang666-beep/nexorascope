@@ -33,6 +33,53 @@ function retryAfterMilliseconds(response, fallbackMs = GOPLUS_DEFAULT_COOLDOWN_M
   return fallbackMs;
 }
 
+// Keep GoPlus cooldowns in the edge cache as well as the isolate-local map.
+// Cloudflare's Cache API is data-center scoped, so this reduces repeated
+// requests within a POP but is not a globally shared quota coordinator.
+async function getProviderCooldownUntil(cooldownKey) {
+  const localUntil = PROVIDER_COOLDOWNS.get(cooldownKey) || 0;
+  if (localUntil > Date.now()) return localUntil;
+
+  try {
+    if (typeof caches !== "undefined" && caches.default) {
+      const key = cacheKeyFor(`provider-cooldown:${cooldownKey}`);
+      const hit = await caches.default.match(key);
+      if (hit) {
+        const payload = await hit.json();
+        const cachedUntil = Number(payload?.until || 0);
+        if (cachedUntil > Date.now()) {
+          PROVIDER_COOLDOWNS.set(cooldownKey, cachedUntil);
+          return cachedUntil;
+        }
+      }
+    }
+  } catch (_) {}
+
+  return 0;
+}
+
+async function setProviderCooldown(cooldownKey, cooldownMs) {
+  const until = Date.now() + cooldownMs;
+  PROVIDER_COOLDOWNS.set(cooldownKey, until);
+
+  try {
+    if (typeof caches !== "undefined" && caches.default) {
+      const key = cacheKeyFor(`provider-cooldown:${cooldownKey}`);
+      await caches.default.put(
+        key,
+        new Response(JSON.stringify({ until }), {
+          headers: {
+            "content-type": "application/json",
+            "cache-control": `public, max-age=${Math.max(1, Math.ceil(cooldownMs / 1000))}`
+          }
+        })
+      );
+    }
+  } catch (_) {}
+
+  return until;
+}
+
 const APPROVAL_TOPIC =
   "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
 
@@ -315,7 +362,7 @@ async function cachedProviderGet(
       ? `${provider}:${rateLimitScope}`
       : null;
     const cooldownUntil = cooldownKey
-      ? (PROVIDER_COOLDOWNS.get(cooldownKey) || 0)
+      ? await getProviderCooldownUntil(cooldownKey)
       : 0;
 
     if (cooldownUntil > Date.now()) {
@@ -386,7 +433,7 @@ async function cachedProviderGet(
 
           if (failureStatus === "rate_limited" && cooldownKey) {
             const cooldownMs = retryAfterMilliseconds(response);
-            PROVIDER_COOLDOWNS.set(cooldownKey, Date.now() + cooldownMs);
+            await setProviderCooldown(cooldownKey, cooldownMs);
             err.retryAfterMs = cooldownMs;
             err.retryAfterSeconds = Math.ceil(cooldownMs / 1000);
             throw err;
@@ -449,7 +496,7 @@ async function cachedProviderGet(
         if (failureStatus === "rate_limited" && cooldownKey) {
           const cooldownMs = error?.retryAfterMs ||
             (error?.retryAfterSeconds ? error.retryAfterSeconds * 1000 : GOPLUS_DEFAULT_COOLDOWN_MS);
-          PROVIDER_COOLDOWNS.set(cooldownKey, Date.now() + cooldownMs);
+          await setProviderCooldown(cooldownKey, cooldownMs);
           error.status = "rate_limited";
           error.retryAfterSeconds = error.retryAfterSeconds ||
             Math.ceil(cooldownMs / 1000);
