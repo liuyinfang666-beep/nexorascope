@@ -2187,6 +2187,17 @@ async function handleScan(request, env) {
         ? "partial"
         : "unavailable";
 
+  // Contract scores require a successful, complete GoPlus token-security check.
+  const contractCoreCheckSuccessful =
+    mode !== "contract" ||
+    (
+      providers.token_security?.status === "success" &&
+      providers.token_security?.incomplete !== true
+    );
+  const score = contractCoreCheckSuccessful
+    ? scoreFindings(findings)
+    : null;
+
   return json({
     schemaVersion: 3,
     mode,
@@ -2195,9 +2206,9 @@ async function handleScan(request, env) {
     target: address,
     checkedAt: new Date().toISOString(),
     overallStatus,
-    score: scoreFindings(findings),
+    score,
     scoreLabel:
-      scoreFindings(findings) === null
+      score === null
         ? "Insufficient data"
         : "Indicator score",
     findings,
