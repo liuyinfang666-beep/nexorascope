@@ -33,17 +33,47 @@ function retryAfterMilliseconds(response, fallbackMs = GOPLUS_DEFAULT_COOLDOWN_M
   return fallbackMs;
 }
 
-// Keep GoPlus cooldowns in this Worker isolate only.
-// This avoids relying on Cache API keys that may not belong to a zone
-// controlled by this Worker. Cooldowns are not shared across isolates.
-async function getProviderCooldownUntil(cooldownKey) {
-  const localUntil = PROVIDER_COOLDOWNS.get(cooldownKey) || 0;
-  return localUntil > Date.now() ? localUntil : 0;
+// Shared GoPlus cooldowns use the optional Cloudflare KV binding
+// GOPLUS_COOLDOWNS. The isolate-local Map remains a fast fallback.
+// KV is eventually consistent, so this reduces cross-isolate duplicate
+// requests but is not an atomic distributed lock.
+function cooldownKvKey(cooldownKey) {
+  return `provider-cooldown:${cooldownKey}`;
 }
 
-async function setProviderCooldown(cooldownKey, cooldownMs) {
+async function getProviderCooldownUntil(cooldownKey, env) {
+  const localUntil = PROVIDER_COOLDOWNS.get(cooldownKey) || 0;
+  if (localUntil > Date.now()) return localUntil;
+  const kv = env?.GOPLUS_COOLDOWNS;
+  if (kv && typeof kv.get === "function") {
+    try {
+      const stored = await kv.get(cooldownKvKey(cooldownKey));
+      const sharedUntil = Number(stored);
+      if (Number.isFinite(sharedUntil) && sharedUntil > Date.now()) {
+        PROVIDER_COOLDOWNS.set(cooldownKey, sharedUntil);
+        return sharedUntil;
+      }
+    } catch (_) {
+      // KV failure must not interrupt contract scanning.
+    }
+  }
+  return 0;
+}
+
+async function setProviderCooldown(cooldownKey, cooldownMs, env) {
   const until = Date.now() + cooldownMs;
   PROVIDER_COOLDOWNS.set(cooldownKey, until);
+  const kv = env?.GOPLUS_COOLDOWNS;
+  if (kv && typeof kv.put === "function") {
+    try {
+      const ttlSeconds = Math.max(60, Math.ceil(cooldownMs / 1000) + 30);
+      await kv.put(cooldownKvKey(cooldownKey), String(until), {
+        expirationTtl: ttlSeconds
+      });
+    } catch (_) {
+      // Preserve local cooldown when the shared KV write fails.
+    }
+  }
   return until;
 }
 
@@ -304,7 +334,7 @@ async function cachedProviderGet(
       ? `${provider}:${rateLimitScope}`
       : null;
     const cooldownUntil = cooldownKey
-      ? await getProviderCooldownUntil(cooldownKey)
+      ? await getProviderCooldownUntil(cooldownKey, env)
       : 0;
 
     if (cooldownUntil > Date.now()) {
@@ -375,7 +405,7 @@ async function cachedProviderGet(
 
           if (failureStatus === "rate_limited" && cooldownKey) {
             const cooldownMs = retryAfterMilliseconds(response);
-            await setProviderCooldown(cooldownKey, cooldownMs);
+            await setProviderCooldown(cooldownKey, cooldownMs, env);
             err.retryAfterMs = cooldownMs;
             err.retryAfterSeconds = Math.ceil(cooldownMs / 1000);
             throw err;
@@ -424,7 +454,7 @@ async function cachedProviderGet(
         if (failureStatus === "rate_limited" && cooldownKey) {
           const cooldownMs = error?.retryAfterMs ||
             (error?.retryAfterSeconds ? error.retryAfterSeconds * 1000 : GOPLUS_DEFAULT_COOLDOWN_MS);
-          await setProviderCooldown(cooldownKey, cooldownMs);
+          await setProviderCooldown(cooldownKey, cooldownMs, env);
           error.status = "rate_limited";
           error.retryAfterSeconds = error.retryAfterSeconds ||
             Math.ceil(cooldownMs / 1000);
