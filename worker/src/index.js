@@ -1537,8 +1537,8 @@ async function scanContractOnChain(address, chainId, env, findings) {
       addFinding(
         findings,
         "EIP-1167 minimal proxy",
-        "Runtime bytecode matches the standard minimal-clone pattern and embeds fixed implementation " +
-          cloneImplementation + ". The implementation is not upgradeable through the standard clone mechanism, but its own behavior still requires review.",
+        "Runtime bytecode begins with the standard EIP-1167 minimal-clone delegatecall sequence and embeds fixed implementation " +
+          cloneImplementation + ". Trailing bytes may contain immutable clone data; this is a bytecode-pattern heuristic, and the implementation still requires review.",
         "warn",
         5
       );
