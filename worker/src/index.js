@@ -426,6 +426,7 @@ async function cachedProviderGet(
           });
         }
 
+        const providerRequestStartedAt = Date.now();
         const response = await fetch(url, {
           headers: requestHeaders,
           signal: AbortSignal.timeout(12000)
@@ -446,6 +447,18 @@ async function cachedProviderGet(
           data?.message || data?.msg || data?.error || "";
 
         const providerCode = data?.code;
+
+        if (provider === "goplus") {
+          console.info("[goplus-cooldown] provider_response", {
+            scope: cooldownKey || provider,
+            httpStatus: response.status,
+            responseOk: response.ok,
+            providerCode: providerCode ?? null,
+            providerMessage: String(providerMessage).slice(0, 240),
+            retryAfterHeader: response.headers.get("retry-after"),
+            durationMs: Date.now() - providerRequestStartedAt
+          });
+        }
 
         const appError =
           providerCode !== undefined &&
