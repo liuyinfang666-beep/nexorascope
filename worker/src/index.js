@@ -383,13 +383,24 @@ async function cachedProviderGet(
       : 0;
 
     if (cooldownUntil > Date.now()) {
-      const retryAfterSeconds = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      const now = Date.now();
+      const retryAfterSeconds = Math.ceil((cooldownUntil - now) / 1000);
+      console.info("[goplus-cooldown] request_skipped", {
+        scope: cooldownKey,
+        reason: "cooldown_active",
+        cooldownUntil,
+        remainingSeconds: retryAfterSeconds,
+        providerRequestSent: false
+      });
       throw Object.assign(
-        new Error(`${provider} rate limit cooldown is active; retry in about ${retryAfterSeconds} seconds`),
+        new Error(`${provider} rate limit cooldown is active; retry in about `${retryAfterSeconds} seconds`),
         {
           status: "rate_limited",
           httpStatus: null,
-          retryAfterSeconds
+          retryAfterSeconds,
+          cooldownActive: true,
+          requestSkipped: true,
+          cooldownUntil
         }
       );
     }
@@ -406,6 +417,13 @@ async function cachedProviderGet(
         if (provider === "goplus" && env.GOPLUS_TOKEN) {
           requestHeaders.authorization =
             `Bearer ${env.GOPLUS_TOKEN}`;
+        }
+
+        if (provider === "goplus") {
+          console.info("[goplus-cooldown] provider_request", {
+            scope: cooldownKey || provider,
+            providerRequestSent: true
+          });
         }
 
         const response = await fetch(url, {
@@ -3031,7 +3049,10 @@ async function handleScan(request, env) {
           ? `${e.message || "Provider rate limited"} (retry after approximately ${e.retryAfterSeconds}s)`
           : (e.message || "Provider request failed"),
         retryAfterSeconds: e.retryAfterSeconds || null,
-        cache: "none"
+        cooldownActive: e.cooldownActive === true,
+        requestSkipped: e.requestSkipped === true,
+        cooldownUntil: e.cooldownUntil || null,
+        cache: e.requestSkipped === true ? "cooldown" : "none"
       };
 
       addFinding(
