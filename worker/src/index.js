@@ -23,9 +23,7 @@ async function getGoPlusAuthorization(env) {
   const appSecret = env.GOPLUS_APP_SECRET;
 
   if (!appKey && !appSecret) {
-    return env.GOPLUS_TOKEN
-      ? `Bearer ${env.GOPLUS_TOKEN}`
-      : null;
+    return env.GOPLUS_TOKEN || null;
   }
 
   if (!appKey || !appSecret) {
@@ -39,12 +37,12 @@ async function getGoPlusAuthorization(env) {
     GOPLUS_ACCESS_TOKEN_CACHE &&
     GOPLUS_ACCESS_TOKEN_CACHE.expiresAt > Date.now()
   ) {
-    return `Bearer ${GOPLUS_ACCESS_TOKEN_CACHE.accessToken}`;
+    return GOPLUS_ACCESS_TOKEN_CACHE.accessToken;
   }
 
   if (GOPLUS_ACCESS_TOKEN_IN_FLIGHT) {
     const accessToken = await GOPLUS_ACCESS_TOKEN_IN_FLIGHT;
-    return `Bearer ${accessToken}`;
+    return accessToken;
   }
 
   const tokenJob = (async () => {
@@ -129,7 +127,7 @@ async function getGoPlusAuthorization(env) {
   GOPLUS_ACCESS_TOKEN_IN_FLIGHT = tokenJob;
   try {
     const accessToken = await tokenJob;
-    return `Bearer ${accessToken}`;
+    return accessToken;
   } finally {
     GOPLUS_ACCESS_TOKEN_IN_FLIGHT = null;
   }
