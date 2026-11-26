@@ -55,20 +55,27 @@ async function getProviderCooldownUntil(cooldownKey, env) {
   const kv = env?.GOPLUS_COOLDOWNS;
   if (kv && typeof kv.get === "function") {
     try {
-      const stored = await kv.get(cooldownKvKey(cooldownKey));
+      const kvKey = cooldownKvKey(cooldownKey);
+      const stored = await kv.get(kvKey);
+      const now = Date.now();
       const sharedUntil = Number(stored);
-      if (Number.isFinite(sharedUntil) && sharedUntil > Date.now()) {
+      if (Number.isFinite(sharedUntil) && sharedUntil > now) {
         PROVIDER_COOLDOWNS.set(cooldownKey, sharedUntil);
         console.info("[goplus-cooldown] read_hit", {
           scope: cooldownKey,
           source: "cloudflare_kv",
-          remainingSeconds: Math.ceil((sharedUntil - Date.now()) / 1000)
+          kvKey,
+          remainingSeconds: Math.ceil((sharedUntil - now) / 1000)
         });
         return sharedUntil;
       }
       console.info("[goplus-cooldown] read_miss", {
         scope: cooldownKey,
         source: "cloudflare_kv",
+        kvKey,
+        storedValuePresent: stored !== null && stored !== undefined,
+        storedUntil: stored === null || stored === undefined ? null : String(stored),
+        now,
         bindingAvailable: true
       });
     } catch (error) {
@@ -97,6 +104,8 @@ async function setProviderCooldown(cooldownKey, cooldownMs, env) {
       });
       console.info("[goplus-cooldown] write_success", {
         scope: cooldownKey,
+        kvKey: cooldownKvKey(cooldownKey),
+        cooldownUntil: until,
         ttlSeconds
       });
     } catch (error) {
@@ -440,8 +449,9 @@ async function cachedProviderGet(
           );
 
           if (failureStatus === "rate_limited" && cooldownKey) {
+            // The enclosing catch block persists the cooldown once.
+            // Avoid writing the same KV key twice for one provider response.
             const cooldownMs = retryAfterMilliseconds(response);
-            await setProviderCooldown(cooldownKey, cooldownMs, env);
             err.retryAfterMs = cooldownMs;
             err.retryAfterSeconds = Math.ceil(cooldownMs / 1000);
             throw err;
