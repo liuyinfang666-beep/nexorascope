@@ -393,7 +393,7 @@ async function cachedProviderGet(
         providerRequestSent: false
       });
       throw Object.assign(
-        new Error(`${provider} rate limit cooldown is active; retry in about `${retryAfterSeconds} seconds`),
+        new Error(`${provider} rate limit cooldown is active; retry in about ${retryAfterSeconds} seconds`),
         {
           status: "rate_limited",
           httpStatus: null,
