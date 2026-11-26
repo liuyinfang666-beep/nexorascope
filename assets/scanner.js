@@ -171,7 +171,9 @@
       data.mode === "contract" &&
       (
         data.providers?.token_security?.status !== "success" ||
-        data.providers?.token_security?.incomplete === true
+        data.providers?.token_security?.incomplete === true ||
+        data.providers?.onchain_contract?.status !== "success" ||
+        data.providers?.onchain_contract?.incomplete === true
       );
 
     if (

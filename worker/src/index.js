@@ -13,6 +13,231 @@ const MAX_RETRIES = 1;
 
 const ETHERSCAN_API = "https://api.etherscan.io/v2/api";
 const GOPLUS_API = "https://api.gopluslabs.io";
+const PROVIDER_COOLDOWNS = new Map();
+const GOPLUS_DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
+let GOPLUS_ACCESS_TOKEN_CACHE = null;
+let GOPLUS_ACCESS_TOKEN_IN_FLIGHT = null;
+
+async function getGoPlusAuthorization(env) {
+  const appKey = env.GOPLUS_APP_KEY;
+  const appSecret = env.GOPLUS_APP_SECRET;
+
+  if (!appKey && !appSecret) {
+    return env.GOPLUS_TOKEN || null;
+  }
+
+  if (!appKey || !appSecret) {
+    throw Object.assign(
+      new Error("Both GOPLUS_APP_KEY and GOPLUS_APP_SECRET must be configured"),
+      { status: "auth_error" }
+    );
+  }
+
+  if (
+    GOPLUS_ACCESS_TOKEN_CACHE &&
+    GOPLUS_ACCESS_TOKEN_CACHE.expiresAt > Date.now()
+  ) {
+    return GOPLUS_ACCESS_TOKEN_CACHE.accessToken;
+  }
+
+  if (GOPLUS_ACCESS_TOKEN_IN_FLIGHT) {
+    const accessToken = await GOPLUS_ACCESS_TOKEN_IN_FLIGHT;
+    return accessToken;
+  }
+
+  const tokenJob = (async () => {
+    const time = Math.floor(Date.now() / 1000);
+    const signInput = `${appKey}${time}${appSecret}`;
+    const digest = await crypto.subtle.digest(
+      "SHA-1",
+      new TextEncoder().encode(signInput)
+    );
+    const sign = Array.from(new Uint8Array(digest))
+      .map(byte => byte.toString(16).padStart(2, "0"))
+      .join("");
+
+    const startedAt = Date.now();
+    const response = await fetch(`${GOPLUS_API}/api/v1/token`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        app_key: appKey,
+        sign,
+        time
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (_) {
+      throw Object.assign(
+        new Error("GoPlus token endpoint returned invalid JSON"),
+        { status: "unavailable", httpStatus: response.status }
+      );
+    }
+
+    const providerCode = data?.code;
+    const providerMessage = data?.message || data?.msg || "";
+    const accessToken =
+      data?.result?.access_token || data?.access_token || "";
+    const codeText = String(providerCode ?? "");
+
+    if (!response.ok || codeText !== "1" || !accessToken) {
+      const status = codeText === "4029"
+        ? "rate_limited"
+        : ["4010", "4011", "4012", "4023"].includes(codeText)
+          ? "auth_error"
+          : classifyFailure(response.status, providerMessage);
+
+      console.warn("[goplus-auth] token_response", {
+        httpStatus: response.status,
+        providerCode: providerCode ?? null,
+        providerMessage: String(providerMessage).slice(0, 200),
+        durationMs: Date.now() - startedAt
+      });
+
+      throw Object.assign(
+        new Error(providerMessage || `GoPlus token request failed (code ${codeText || "unknown"})`),
+        { status, httpStatus: response.status }
+      );
+    }
+
+    const expiresIn = Number(data?.result?.expires_in ?? data?.expires_in ?? 3600);
+    const cacheMs = Math.max(1000, (expiresIn - 60) * 1000);
+    GOPLUS_ACCESS_TOKEN_CACHE = {
+      accessToken,
+      expiresAt: Date.now() + cacheMs
+    };
+
+    console.info("[goplus-auth] token_response", {
+      httpStatus: response.status,
+      providerCode: providerCode ?? null,
+      expiresInSeconds: Number.isFinite(expiresIn) ? expiresIn : null,
+      durationMs: Date.now() - startedAt
+    });
+
+    return accessToken;
+  })();
+
+  GOPLUS_ACCESS_TOKEN_IN_FLIGHT = tokenJob;
+  try {
+    const accessToken = await tokenJob;
+    return accessToken;
+  } finally {
+    GOPLUS_ACCESS_TOKEN_IN_FLIGHT = null;
+  }
+}
+
+function retryAfterMilliseconds(response, fallbackMs = GOPLUS_DEFAULT_COOLDOWN_MS) {
+  const value = response?.headers?.get("retry-after");
+  if (!value) return fallbackMs;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.max(seconds * 1000, 1000), 5 * 60 * 1000);
+  }
+
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) {
+    return Math.min(Math.max(dateMs - Date.now(), 1000), 5 * 60 * 1000);
+  }
+
+  return fallbackMs;
+}
+
+// Shared GoPlus cooldowns use the optional Cloudflare KV binding
+// GOPLUS_COOLDOWNS. The isolate-local Map remains a fast fallback.
+// KV is eventually consistent, so this reduces cross-isolate duplicate
+// requests but is not an atomic distributed lock.
+function cooldownKvKey(cooldownKey) {
+  return `provider-cooldown:${cooldownKey}`;
+}
+
+async function getProviderCooldownUntil(cooldownKey, env) {
+  const localUntil = PROVIDER_COOLDOWNS.get(cooldownKey) || 0;
+  if (localUntil > Date.now()) {
+    console.info("[goplus-cooldown] read_hit", {
+      scope: cooldownKey,
+      source: "isolate_memory",
+      remainingSeconds: Math.ceil((localUntil - Date.now()) / 1000)
+    });
+    return localUntil;
+  }
+
+  const kv = env?.GOPLUS_COOLDOWNS;
+  if (kv && typeof kv.get === "function") {
+    try {
+      const kvKey = cooldownKvKey(cooldownKey);
+      const stored = await kv.get(kvKey);
+      const now = Date.now();
+      const sharedUntil = Number(stored);
+      if (Number.isFinite(sharedUntil) && sharedUntil > now) {
+        PROVIDER_COOLDOWNS.set(cooldownKey, sharedUntil);
+        console.info("[goplus-cooldown] read_hit", {
+          scope: cooldownKey,
+          source: "cloudflare_kv",
+          kvKey,
+          remainingSeconds: Math.ceil((sharedUntil - now) / 1000)
+        });
+        return sharedUntil;
+      }
+      console.info("[goplus-cooldown] read_miss", {
+        scope: cooldownKey,
+        source: "cloudflare_kv",
+        kvKey,
+        storedValuePresent: stored !== null && stored !== undefined,
+        storedUntil: stored === null || stored === undefined ? null : String(stored),
+        now,
+        bindingAvailable: true
+      });
+    } catch (error) {
+      console.warn("[goplus-cooldown] read_error", {
+        scope: cooldownKey,
+        message: String(error?.message || error).slice(0, 160)
+      });
+    }
+  } else {
+    console.warn("[goplus-cooldown] binding_unavailable", {
+      scope: cooldownKey
+    });
+  }
+  return 0;
+}
+
+async function setProviderCooldown(cooldownKey, cooldownMs, env) {
+  const until = Date.now() + cooldownMs;
+  PROVIDER_COOLDOWNS.set(cooldownKey, until);
+  const kv = env?.GOPLUS_COOLDOWNS;
+  if (kv && typeof kv.put === "function") {
+    try {
+      const ttlSeconds = Math.max(60, Math.ceil(cooldownMs / 1000) + 30);
+      await kv.put(cooldownKvKey(cooldownKey), String(until), {
+        expirationTtl: ttlSeconds
+      });
+      console.info("[goplus-cooldown] write_success", {
+        scope: cooldownKey,
+        kvKey: cooldownKvKey(cooldownKey),
+        cooldownUntil: until,
+        ttlSeconds
+      });
+    } catch (error) {
+      console.warn("[goplus-cooldown] write_error", {
+        scope: cooldownKey,
+        message: String(error?.message || error).slice(0, 160)
+      });
+    }
+  } else {
+    console.warn("[goplus-cooldown] binding_unavailable", {
+      scope: cooldownKey
+    });
+  }
+  return until;
+}
 
 const APPROVAL_TOPIC =
   "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
@@ -58,7 +283,8 @@ function withCors(response, request) {
 
   const allowed = new Set([
     "https://nexorascope.xyz",
-    "https://www.nexorascope.xyz"
+    "https://www.nexorascope.xyz",
+    "https://nexorascope.pages.dev"
   ]);
 
   const isNexoraPreview =
@@ -243,20 +469,12 @@ async function fetchEtherscanJson(url, timeout = 15000) {
   throw lastError || new Error("Etherscan request failed");
 }
 
-function cacheKeyFor(url) {
-  return new Request(
-    `https://nexorascope-cache.invalid/${encodeURIComponent(url)}`,
-    { method: "GET" }
-  );
-}
-
 async function cachedProviderGet(
   provider,
   url,
   env,
-  { ttl = CACHE_TTL_SECONDS, headers = {} } = {}
+  { ttl = CACHE_TTL_SECONDS, headers = {}, rateLimitScope = null } = {}
 ) {
-  const key = cacheKeyFor(url);
   const inflightKey = `${provider}:${url}`;
   const now = Date.now();
 
@@ -274,22 +492,35 @@ async function cachedProviderGet(
   }
 
   const job = (async () => {
-    try {
-      if (typeof caches !== "undefined" && caches.default) {
-        const hit = await caches.default.match(key);
+    const cooldownKey = rateLimitScope
+      ? `${provider}:${rateLimitScope}`
+      : null;
+    const cooldownUntil = cooldownKey
+      ? await getProviderCooldownUntil(cooldownKey, env)
+      : 0;
 
-        if (hit) {
-          const payload = await hit.json();
-
-          MEMORY_CACHE.set(inflightKey, {
-            value: payload,
-            expires: now + ttl * 1000
-          });
-
-          return { ...payload, cache: "edge" };
+    if (cooldownUntil > Date.now()) {
+      const now = Date.now();
+      const retryAfterSeconds = Math.ceil((cooldownUntil - now) / 1000);
+      console.info("[goplus-cooldown] request_skipped", {
+        scope: cooldownKey,
+        reason: "cooldown_active",
+        cooldownUntil,
+        remainingSeconds: retryAfterSeconds,
+        providerRequestSent: false
+      });
+      throw Object.assign(
+        new Error(`${provider} rate limit cooldown is active; retry in about ${retryAfterSeconds} seconds`),
+        {
+          status: "rate_limited",
+          httpStatus: null,
+          retryAfterSeconds,
+          cooldownActive: true,
+          requestSkipped: true,
+          cooldownUntil
         }
-      }
-    } catch (_) {}
+      );
+    }
 
     let lastError = null;
 
@@ -300,11 +531,21 @@ async function cachedProviderGet(
           ...headers
         };
 
-        if (provider === "goplus" && env.GOPLUS_TOKEN) {
-          requestHeaders.authorization =
-            `Bearer ${env.GOPLUS_TOKEN}`;
+        if (provider === "goplus") {
+          const authorization = await getGoPlusAuthorization(env);
+          if (authorization) {
+            requestHeaders.authorization = authorization;
+          }
         }
 
+        if (provider === "goplus") {
+          console.info("[goplus-cooldown] provider_request", {
+            scope: cooldownKey || provider,
+            providerRequestSent: true
+          });
+        }
+
+        const providerRequestStartedAt = Date.now();
         const response = await fetch(url, {
           headers: requestHeaders,
           signal: AbortSignal.timeout(12000)
@@ -326,6 +567,18 @@ async function cachedProviderGet(
 
         const providerCode = data?.code;
 
+        if (provider === "goplus") {
+          console.info("[goplus-cooldown] provider_response", {
+            scope: cooldownKey || provider,
+            httpStatus: response.status,
+            responseOk: response.ok,
+            providerCode: providerCode ?? null,
+            providerMessage: String(providerMessage).slice(0, 240),
+            retryAfterHeader: response.headers.get("retry-after"),
+            durationMs: Date.now() - providerRequestStartedAt
+          });
+        }
+
         const appError =
           providerCode !== undefined &&
           String(providerCode) !== "1" &&
@@ -344,6 +597,15 @@ async function cachedProviderGet(
               httpStatus: response.status
             }
           );
+
+          if (failureStatus === "rate_limited" && cooldownKey) {
+            // The enclosing catch block persists the cooldown once.
+            // Avoid writing the same KV key twice for one provider response.
+            const cooldownMs = retryAfterMilliseconds(response);
+            err.retryAfterMs = cooldownMs;
+            err.retryAfterSeconds = Math.ceil(cooldownMs / 1000);
+            throw err;
+          }
 
           if (
             attempt < MAX_RETRIES &&
@@ -375,32 +637,33 @@ async function cachedProviderGet(
           expires: Date.now() + ttl * 1000
         });
 
-        if (typeof caches !== "undefined" && caches.default) {
-          try {
-            await caches.default.put(
-              key,
-              new Response(JSON.stringify(value), {
-                headers: {
-                  "content-type": "application/json",
-                  "cache-control": `public, max-age=${ttl}`
-                }
-              })
-            );
-          } catch (_) {}
-        }
-
         return { ...value, cache: "miss" };
 
       } catch (error) {
         lastError = error;
 
-        if (error?.status) throw error;
-
-        const failureStatus = classifyFailure(
+        const failureStatus = error?.status || classifyFailure(
           error?.httpStatus || 0,
           error?.message || ""
         );
-        if (          attempt < MAX_RETRIES &&
+
+        if (failureStatus === "rate_limited" && cooldownKey) {
+          const cooldownMs = error?.retryAfterMs ||
+            (error?.retryAfterSeconds ? error.retryAfterSeconds * 1000 : GOPLUS_DEFAULT_COOLDOWN_MS);
+          const cooldownUntil = await setProviderCooldown(cooldownKey, cooldownMs, env);
+          error.status = "rate_limited";
+          error.retryAfterSeconds = error.retryAfterSeconds ||
+            Math.ceil(cooldownMs / 1000);
+          error.cooldownActive = true;
+          error.requestSkipped = false;
+          error.cooldownUntil = cooldownUntil;
+          throw error;
+        }
+
+        if (error?.status) throw error;
+
+        if (
+          attempt < MAX_RETRIES &&
           failureStatus === "unavailable"
         ) {
           await new Promise(resolve =>
@@ -762,6 +1025,7 @@ function providerStatus(provider, result) {
       status: result.status,
       httpStatus: result.httpStatus ?? null,
       message: result.message || "",
+      retryAfterSeconds: result.retryAfterSeconds ?? null,
       cache: result.cache || "none"
     };
   }
@@ -1022,6 +1286,911 @@ async function bscEthCall(env, to, data) {
 }
 
 
+
+
+const EIP1967_IMPLEMENTATION_SLOT =
+  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+const EIP1967_ADMIN_SLOT =
+  "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103";
+const EIP1967_BEACON_SLOT =
+  "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50";
+
+async function chainRpcRequest(env, chainId, method, params) {
+  const id = String(chainId);
+
+  if (id === "1") {
+    if (!env.ETHERSCAN_API_KEY) {
+      throw Object.assign(new Error("ETHERSCAN_API_KEY is not configured for Ethereum RPC reads"), {
+        status: "unavailable",
+        failureType: "missing_rpc_configuration"
+      });
+    }
+
+    const query = new URLSearchParams({
+      chainid: id,
+      module: "proxy",
+      action: method,
+      apikey: env.ETHERSCAN_API_KEY
+    });
+
+    if (method === "eth_call") {
+      query.set("to", params[0].to);
+      query.set("data", params[0].data);
+      query.set("tag", params[1] || "latest");
+    } else if (method === "eth_getCode") {
+      query.set("address", params[0]);
+      query.set("tag", params[1] || "latest");
+    } else if (method === "eth_getStorageAt") {
+      query.set("address", params[0]);
+      query.set("position", params[1]);
+      query.set("tag", params[2] || "latest");
+    } else {
+      throw Object.assign(new Error("Unsupported Ethereum RPC method: " + method), {
+        status: "error",
+        failureType: "unsupported_rpc_method"
+      });
+    }
+
+    const response = await fetchEtherscanJson(ETHERSCAN_API + "?" + query.toString());
+    if (response?.result === undefined || response?.result === null) {
+      throw Object.assign(new Error("Etherscan RPC response did not contain a result"), {
+        status: "error",
+        failureType: "missing_rpc_result"
+      });
+    }
+    return response.result;
+  }
+
+  const endpoint = id === "8453"
+    ? String(env.ANKR_BASE_RPC_URL || "").trim()
+    : id === "56"
+      ? String(env.ANKR_BSC_RPC_URL || "").trim()
+      : "";
+
+  if (!endpoint) {
+    throw Object.assign(new Error("Ankr RPC endpoint is not configured for chainId " + id), {
+      status: "unavailable",
+      failureType: "missing_rpc_configuration"
+    });
+  }
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params
+    }),
+    signal: AbortSignal.timeout(20000)
+  });
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw Object.assign(new Error("Chain RPC returned invalid JSON"), {
+      status: "unavailable",
+      httpStatus: response.status
+    });
+  }
+
+  if (!response.ok || payload?.error) {
+    const message = payload?.error?.message || ("Chain RPC HTTP " + response.status);
+    throw Object.assign(new Error(message), {
+      status: classifyFailure(response.status, message),
+      httpStatus: response.status
+    });
+  }
+
+  if (payload?.result === undefined || payload?.result === null) {
+    throw Object.assign(new Error("Chain RPC response did not contain a result"), {
+      status: "error",
+      httpStatus: response.status
+    });
+  }
+
+  return payload.result;
+}
+
+function decodeWordAddress(raw) {
+  if (!/^0x[0-9a-f]{64}$/i.test(raw || "")) return null;
+  const address = "0x" + raw.slice(-40);
+  return /^0x0{40}$/i.test(address) ? null : address;
+}
+
+function decodeWordUint(raw) {
+  if (!/^0x[0-9a-f]{64}$/i.test(raw || "")) return null;
+  try {
+    return BigInt(raw).toString(10);
+  } catch (_) {
+    return null;
+  }
+}
+
+// Ethereum Keccak-256 (not NIST SHA3-256). Used to derive storage keys for
+// selector-routed proxy dispatch tables. Input is intentionally bounded.
+function keccak256Hex(inputBytes) {
+  const MASK = (1n << 64n) - 1n;
+  const RC = [
+    0x0000000000000001n, 0x0000000000008082n, 0x800000000000808an,
+    0x8000000080008000n, 0x000000000000808bn, 0x0000000080000001n,
+    0x8000000080008081n, 0x8000000000008009n, 0x000000000000008an,
+    0x0000000000000088n, 0x0000000080008009n, 0x000000008000000an,
+    0x000000008000808bn, 0x800000000000008bn, 0x8000000000008089n,
+    0x8000000000008003n, 0x8000000000008002n, 0x8000000000000080n,
+    0x000000000000800an, 0x800000008000000an, 0x8000000080008081n,
+    0x8000000000008080n, 0x0000000080000001n, 0x8000000080008008n
+  ];
+  const ROT = [
+    0, 1, 62, 28, 27,
+    36, 44, 6, 55, 20,
+    3, 10, 43, 25, 39,
+    41, 45, 15, 21, 8,
+    18, 2, 61, 56, 14
+  ];
+  const rotl = (x, n) => n === 0 ? x : ((x << BigInt(n)) | (x >> BigInt(64 - n))) & MASK;
+  const bytes = Array.from(inputBytes);
+  const rate = 136;
+  bytes.push(0x01);
+  while (bytes.length % rate !== rate - 1) bytes.push(0);
+  bytes.push(0x80);
+  const state = Array(25).fill(0n);
+
+  for (let block = 0; block < bytes.length; block += rate) {
+    for (let i = 0; i < rate; i++) {
+      const lane = Math.floor(i / 8);
+      state[lane] ^= BigInt(bytes[block + i]) << BigInt((i % 8) * 8);
+    }
+    for (const roundConstant of RC) {
+      const c = Array(5).fill(0n);
+      const d = Array(5).fill(0n);
+      for (let x = 0; x < 5; x++) {
+        c[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
+      }
+      for (let x = 0; x < 5; x++) {
+        d[x] = c[(x + 4) % 5] ^ rotl(c[(x + 1) % 5], 1);
+      }
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) state[x + 5 * y] ^= d[x];
+      }
+
+      const b = Array(25).fill(0n);
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) {
+          const newX = y;
+          const newY = (2 * x + 3 * y) % 5;
+          b[newX + 5 * newY] = rotl(state[x + 5 * y], ROT[x + 5 * y]);
+        }
+      }
+      for (let y = 0; y < 5; y++) {
+        for (let x = 0; x < 5; x++) {
+          state[x + 5 * y] = b[x + 5 * y] ^
+            ((~b[(x + 1) % 5 + 5 * y]) & b[(x + 2) % 5 + 5 * y]);
+        }
+      }
+      state[0] ^= roundConstant;
+    }
+  }
+
+  const output = [];
+  for (let i = 0; i < 32; i++) {
+    const lane = Math.floor(i / 8);
+    output.push(Number((state[lane] >> BigInt((i % 8) * 8)) & 0xffn));
+  }
+  return "0x" + output.map(v => v.toString(16).padStart(2, "0")).join("");
+}
+
+function selectorStorageSlot(selector, salt) {
+  if (!/^[0-9a-f]{8}$/i.test(selector || "") ||
+      !/^0x[0-9a-f]{64}$/i.test(salt || "")) return null;
+  // The observed dispatcher hashes two 32-byte memory words:
+  // bytes4 selector left-aligned in word 0, followed by the bytes32 salt.
+  const encoded = selector.toLowerCase().padEnd(64, "0") + salt.slice(2).toLowerCase();
+  const bytes = encoded.match(/.{2}/g).map(x => parseInt(x, 16));
+  return keccak256Hex(bytes);
+}
+
+function detectSelectorRoutedProxySalt(bytecode) {
+  if (typeof bytecode !== "string" || !/^0x[0-9a-f]*$/i.test(bytecode)) return [];
+  const hex = bytecode.slice(2).toLowerCase();
+  const salts = new Set();
+  // Walk opcodes (rather than searching arbitrary hex) so constants embedded
+  // inside PUSH data cannot be mistaken for executable dispatcher instructions.
+  for (let offset = 0; offset + 2 <= hex.length;) {
+    const opcode = Number.parseInt(hex.slice(offset, offset + 2), 16);
+    if (opcode >= 0x60 && opcode <= 0x7f) {
+      const pushBytes = opcode - 0x5f;
+      const dataStart = offset + 2;
+      const dataEnd = dataStart + pushBytes * 2;
+      if (dataEnd > hex.length) break;
+      if (opcode === 0x7f && hex.slice(dataEnd, dataEnd + 16) === "6020526040902054") {
+        salts.add("0x" + hex.slice(dataStart, dataEnd));
+      }
+      offset = dataEnd;
+    } else {
+      offset += 2;
+    }
+  }
+  return [...salts];
+}
+
+function extractPushedSelectors(bytecode) {
+  if (typeof bytecode !== "string" || !/^0x[0-9a-f]*$/i.test(bytecode)) {
+    return [];
+  }
+
+  const hex = bytecode.slice(2).toLowerCase();
+  const selectors = new Set();
+
+  // Walk EVM instructions so PUSH4 data is not confused with embedded bytes
+  // inside other PUSH instructions.
+  for (let offset = 0; offset + 2 <= hex.length;) {
+    const opcode = Number.parseInt(hex.slice(offset, offset + 2), 16);
+
+    if (opcode >= 0x60 && opcode <= 0x7f) {
+      const pushBytes = opcode - 0x5f;
+      const dataStart = offset + 2;
+      const dataEnd = dataStart + pushBytes * 2;
+      if (dataEnd > hex.length) break;
+
+      if (opcode === 0x63) {
+        selectors.add(hex.slice(dataStart, dataEnd));
+      }
+
+      offset = dataEnd;
+    } else {
+      offset += 2;
+    }
+  }
+
+  return [...selectors];
+}
+
+const ERC20_DISPATCH_SELECTORS = {
+  "06fdde03": "name",
+  "95d89b41": "symbol",
+  "313ce567": "decimals",
+  "18160ddd": "totalSupply",
+  "70a08231": "balanceOf",
+  "a9059cbb": "transfer",
+  "dd62ed3e": "allowance",
+  "095ea7b3": "approve",
+  "23b872dd": "transferFrom"
+};
+
+async function getRecentTransactionSelectors(address, chainId, env) {
+  if (!env.ETHERSCAN_API_KEY) {
+    return { status: "unavailable", message: "ETHERSCAN_API_KEY is not configured", selectors: [], transactionCount: 0, historySource: null };
+  }
+
+  const requestHistory = async action => {
+    const url = new URL(ETHERSCAN_API);
+    url.search = new URLSearchParams({
+      chainid: String(chainId),
+      module: "account",
+      action,
+      address,
+      startblock: "0",
+      endblock: "99999999",
+      page: "1",
+      offset: "100",
+      sort: "desc",
+      apikey: env.ETHERSCAN_API_KEY
+    });
+
+    const result = await cachedProviderGet("etherscan", url.toString(), env, { ttl: 180 });
+    const data = result.data;
+    if (String(data?.status) === "0") {
+      const message = String(data?.result || data?.message || "Explorer returned no transaction history");
+      if (/no transactions found/i.test(message)) {
+        return { status: "success", message, transactions: [], cache: result.cache || "none" };
+      }
+      return {
+        status: classifyFailure(result.httpStatus || 200, message),
+        message,
+        transactions: [],
+        cache: result.cache || "none"
+      };
+    }
+    return {
+      status: "success",
+      message: "Transaction history retrieved",
+      transactions: Array.isArray(data?.result) ? data.result : [],
+      cache: result.cache || "none"
+    };
+  };
+
+  const collectSelectors = transactions => {
+    const selectorSet = new Set();
+    for (const tx of transactions) {
+      if (String(tx?.isError || "0") === "1") continue;
+      const input = String(tx?.input || "").toLowerCase();
+      if (!/^0x[0-9a-f]{8,}$/.test(input)) continue;
+      const selector = input.slice(2, 10);
+      if (selector !== "00000000") selectorSet.add(selector);
+      if (selectorSet.size >= 32) break;
+    }
+    return [...selectorSet];
+  };
+
+  try {
+    const direct = await requestHistory("txlist");
+    if (direct.status !== "success") {
+      return {
+        status: direct.status,
+        message: direct.message,
+        selectors: [],
+        transactionCount: direct.transactions.length,
+        historySource: "direct_transactions"
+      };
+    }
+
+    let selectors = collectSelectors(direct.transactions);
+    if (selectors.length) {
+      return {
+        status: "success",
+        message: "Recent successful direct transactions inspected for function selectors",
+        selectors,
+        transactionCount: direct.transactions.length,
+        historySource: "direct_transactions",
+        cache: direct.cache
+      };
+    }
+
+    // If no direct call selectors are available, fall back to internal traces.
+    // This catches contracts reached through another contract's execution path.
+    const internal = await requestHistory("txlistinternal");
+    if (internal.status === "success") {
+      selectors = collectSelectors(internal.transactions);
+      return {
+        status: "success",
+        message: selectors.length
+          ? "Function selectors recovered from recent successful internal transactions"
+          : "No function selectors found in direct or internal transaction history",
+        selectors,
+        transactionCount: direct.transactions.length + internal.transactions.length,
+        historySource: "direct_and_internal_transactions",
+        directTransactionCount: direct.transactions.length,
+        internalTransactionCount: internal.transactions.length,
+        cache: internal.cache || direct.cache
+      };
+    }
+
+    return {
+      status: "partial",
+      message: "Direct transaction history was checked, but internal transaction history was unavailable: " + internal.message,
+      selectors: [],
+      transactionCount: direct.transactions.length,
+      historySource: "direct_transactions_only",
+      directTransactionCount: direct.transactions.length,
+      internalHistoryStatus: internal.status
+    };
+  } catch (error) {
+    return {
+      status: error?.status || "error",
+      message: String(error?.message || "Explorer transaction history request failed").slice(0, 200),
+      selectors: [],
+      transactionCount: 0,
+      historySource: null
+    };
+  }
+}
+
+async function scanContractOnChain(address, chainId, env, findings) {
+  const call = async selector => {
+    try {
+      return await chainRpcRequest(
+        env,
+        chainId,
+        "eth_call",
+        [{ to: address, data: selector }, "latest"]
+      );
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const storage = async slot => {
+    try {
+      return await chainRpcRequest(
+        env,
+        chainId,
+        "eth_getStorageAt",
+        [address, slot, "latest"]
+      );
+    } catch (_) {
+      return null;
+    }
+  };
+
+  try {
+    const code = await chainRpcRequest(
+      env,
+      chainId,
+      "eth_getCode",
+      [address, "latest"]
+    );
+
+    if (typeof code !== "string" || !/^0x[0-9a-f]*$/i.test(code)) {
+      throw Object.assign(new Error("RPC returned invalid contract bytecode"), {
+        status: "error"
+      });
+    }
+
+    const bytecodeBytes = Math.max(0, (code.length - 2) / 2);
+    if (bytecodeBytes === 0) {
+      addFinding(
+        findings,
+        "On-chain contract code",
+        "The selected chain returned no deployed bytecode at this address. This may be an externally owned account, a wrong network, or a contract that no longer has code.",
+        "warn",
+        10
+      );
+      return {
+        provider: "Direct chain RPC",
+        status: "partial",
+        incomplete: true,
+        message: "RPC confirmed that no deployed bytecode exists at the target address; this is not a deployed contract.",
+        bytecodeBytes: 0
+      };
+    }
+
+    let codeHash = null;
+    try {
+      const bytecode = Uint8Array.from(
+        code.slice(2).match(/.{2}/g).map(byte => parseInt(byte, 16))
+      );
+      const digest = await crypto.subtle.digest("SHA-256", bytecode);
+      codeHash = Array.from(new Uint8Array(digest))
+        .map(byte => byte.toString(16).padStart(2, "0"))
+        .join("");
+    } catch (_) {}
+
+    addFinding(
+      findings,
+      "On-chain contract code",
+      "Live RPC confirms deployed runtime bytecode. Bytecode size: " +
+        bytecodeBytes +
+        " bytes" +
+        (codeHash ? "; SHA-256: " + codeHash : "") +
+        ". A code hash identifies this bytecode snapshot; it is not a safety verdict.",
+      "good",
+      0
+    );
+
+    const targetSelectors = extractPushedSelectors(code);
+    const targetErc20Selectors = targetSelectors
+      .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
+      .map(selector => ERC20_DISPATCH_SELECTORS[selector]);
+    const selectorProxySalts = detectSelectorRoutedProxySalt(code);
+    const selectorHistory = selectorProxySalts.length
+      ? await getRecentTransactionSelectors(address, chainId, env)
+      : { status: "not_needed", message: "No selector-routed dispatcher pattern detected", selectors: [], transactionCount: 0 };
+
+    const [nameRaw, symbolRaw, decimalsRaw, supplyRaw, ownerRaw, getOwnerRaw, pausedRaw,
+      implementationRaw, adminRaw, beaconRaw] = await Promise.all([
+      call("0x06fdde03"),
+      call("0x95d89b41"),
+      call("0x313ce567"),
+      call("0x18160ddd"),
+      call("0x8da5cb5b"),
+      call("0x893d20e8"),
+      call("0x5c975abb"),
+      storage(EIP1967_IMPLEMENTATION_SLOT),
+      storage(EIP1967_ADMIN_SLOT),
+      storage(EIP1967_BEACON_SLOT)
+    ]);
+
+    const name = decodeErc20Text(nameRaw);
+    const symbol = decodeErc20Text(symbolRaw);
+    const decimals = decodeWordUint(decimalsRaw);
+    const totalSupply = decodeWordUint(supplyRaw);
+    const owner = decodeWordAddress(ownerRaw) || decodeWordAddress(getOwnerRaw);
+    const paused = /^0x0{63}1$/i.test(pausedRaw || "")
+      ? true
+      : /^0x0{64}$/i.test(pausedRaw || "")
+        ? false
+        : null;
+
+    if (name || symbol || decimals !== null || totalSupply !== null) {
+      addFinding(
+        findings,
+        "On-chain token metadata",
+        "Live contract calls returned " +
+          [name ? "name: " + name : null,
+           symbol ? "symbol: " + symbol : null,
+           decimals !== null ? "decimals: " + decimals : null,
+           totalSupply !== null ? "raw totalSupply: " + totalSupply : null]
+            .filter(Boolean).join("; ") +
+          ". These are contract-reported values and may be non-standard.",
+        "good",
+        0
+      );
+    } else {
+      addFinding(
+        findings,
+        "ERC-20 interface checks",
+        "The common ERC-20 metadata and supply calls did not return decodable values. This address may not be an ERC-20 token, or it may use a non-standard interface.",
+        "neutral",
+        0
+      );
+    }
+
+    if (owner) {
+      addFinding(
+        findings,
+        "On-chain owner control",
+        "The contract returned owner address " + owner +
+          ". An active owner can represent privileged control; inspect its permissions and whether ownership is renounced or governed by a multisig/timelock.",
+        "warn",
+        5
+      );
+    }
+
+    if (paused === true) {
+      addFinding(
+        findings,
+        "Contract pause state",
+        "The contract's paused() call currently returns true.",
+        "warn",
+        12
+      );
+    } else if (paused === false) {
+      addFinding(
+        findings,
+        "Contract pause state",
+        "The contract's paused() call currently returns false. This does not prove that transfers cannot be restricted through other mechanisms.",
+        "good",
+        0
+      );
+    }
+
+    const implementation = decodeWordAddress(implementationRaw);
+    const admin = decodeWordAddress(adminRaw);
+    const beacon = decodeWordAddress(beaconRaw);
+
+    // Some compact/custom proxies route each function selector to a separate
+    // implementation stored at keccak256(abi.encode(selector, salt)).
+    // Read only the bounded common ERC-20 selector set; never infer safety from
+    // a non-zero slot, and verify that every resolved implementation has code.
+    const selectorRoutedImplementations = [];
+    const selectorImplementationAddresses = new Set();
+    if (selectorProxySalts.length) {
+      const salt = selectorProxySalts[0];
+      const selectorNames = { ...ERC20_DISPATCH_SELECTORS };
+      for (const selector of selectorHistory.selectors || []) {
+        if (!selectorNames[selector]) selectorNames[selector] = "observed_" + selector;
+      }
+      // Keep this inspection within the Workers subrequest budget. The
+      // transaction history may contain many selectors, so inspect the nine
+      // standard ERC-20 slots plus at most nine recent observed selectors.
+      const MAX_SELECTOR_STORAGE_READS = 18;
+      const MAX_IMPLEMENTATION_CODE_CHECKS = 6;
+      const selectorEntries = Object.entries(selectorNames).slice(0, MAX_SELECTOR_STORAGE_READS);
+      const slotReads = await Promise.all(selectorEntries.map(async ([selector, functionName]) => {
+        const slot = selectorStorageSlot(selector, salt);
+        try {
+          const raw = await chainRpcRequest(env, chainId, "eth_getStorageAt", [address, slot, "latest"]);
+          const implementationAddress = decodeWordAddress(raw);
+          if (implementationAddress) selectorImplementationAddresses.add(implementationAddress.toLowerCase());
+          return { selector: "0x" + selector, functionName, storageSlot: slot,
+            implementation: implementationAddress, status: implementationAddress ? "address_found" : "empty_slot" };
+        } catch (error) {
+          return { selector: "0x" + selector, functionName, storageSlot: slot,
+            implementation: null, status: error?.status || "read_error",
+            message: String(error?.message || "Storage read failed").slice(0, 160) };
+        }
+      }));
+      // Prioritize addresses referenced by the greatest number of observed
+      // selectors; check each unique implementation only once.
+      const addressUseCounts = new Map();
+      for (const entry of slotReads) {
+        if (entry.implementation) {
+          const key = entry.implementation.toLowerCase();
+          addressUseCounts.set(key, (addressUseCounts.get(key) || 0) + 1);
+        }
+      }
+      const addressesToCheck = [...addressUseCounts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, MAX_IMPLEMENTATION_CODE_CHECKS)
+        .map(([implementationAddress]) => implementationAddress);
+      const codeChecks = new Map();
+      await Promise.all(addressesToCheck.map(async implementationAddress => {
+        try {
+          const implementationCode = await chainRpcRequest(env, chainId, "eth_getCode",
+            [implementationAddress, "latest"]);
+          const validCode = typeof implementationCode === "string" && /^0x[0-9a-f]*$/i.test(implementationCode);
+          codeChecks.set(implementationAddress, {
+            codeBytes: validCode ? Math.max(0, (implementationCode.length - 2) / 2) : null,
+            selectors: validCode ? extractPushedSelectors(implementationCode)
+              .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
+              .map(selector => ERC20_DISPATCH_SELECTORS[selector]) : [],
+            hasCode: validCode && implementationCode.length > 2,
+            checkStatus: "checked"
+          });
+        } catch (error) {
+          codeChecks.set(implementationAddress, {
+            codeBytes: null, selectors: [], hasCode: null,
+            failureType: error?.status || "error",
+            checkStatus: "error"
+          });
+        }
+      }));
+      for (const entry of slotReads) {
+        const key = entry.implementation ? entry.implementation.toLowerCase() : null;
+        const check = key ? codeChecks.get(key) : null;
+        selectorRoutedImplementations.push({
+          ...entry,
+          implementationCodeBytes: check?.codeBytes ?? null,
+          implementationHasCode: check?.hasCode ?? null,
+          implementationCodeCheckStatus: entry.implementation
+            ? (check?.checkStatus || "deferred_subrequest_budget")
+            : "not_applicable",
+          implementationErc20Selectors: check?.selectors ?? []
+        });
+      }
+    }
+
+    // EIP-1167 minimal clones embed their fixed implementation address in runtime code.
+    const cloneMatch = code.match(
+      /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3/i
+    );
+    const cloneImplementation = cloneMatch
+      ? "0x" + cloneMatch[1]
+      : null;
+
+    // EIP-1967 beacon proxies expose implementation() on the beacon contract.
+    let beaconImplementation = null;
+    if (beacon) {
+      try {
+        const beaconRaw = await chainRpcRequest(
+          env,
+          chainId,
+          "eth_call",
+          [{ to: beacon, data: "0x5c60da1b" }, "latest"]
+        );
+        beaconImplementation = decodeWordAddress(beaconRaw);
+      } catch (_) {}
+    }
+
+    const resolvedImplementation =
+      implementation || beaconImplementation || cloneImplementation;
+    let implementationCodeBytes = null;
+    let implementationHasCode = null;
+    let implementationErc20Selectors = [];
+    let uupsProxiableUUID = null;
+
+    if (resolvedImplementation) {
+      try {
+        const implementationCode = await chainRpcRequest(
+          env,
+          chainId,
+          "eth_getCode",
+          [resolvedImplementation, "latest"]
+        );
+        if (typeof implementationCode === "string" &&
+            /^0x[0-9a-f]*$/i.test(implementationCode)) {
+          implementationCodeBytes = Math.max(0, (implementationCode.length - 2) / 2);
+          implementationHasCode = implementationCodeBytes > 0;
+          implementationErc20Selectors = extractPushedSelectors(implementationCode)
+            .filter(selector => ERC20_DISPATCH_SELECTORS[selector])
+            .map(selector => ERC20_DISPATCH_SELECTORS[selector]);
+        }
+      } catch (_) {}
+
+      // EIP-1822/UUPS implementations commonly expose proxiableUUID().
+      try {
+        const uuidRaw = await chainRpcRequest(
+          env,
+          chainId,
+          "eth_call",
+          [{ to: resolvedImplementation, data: "0x52d1902d" }, "latest"]
+        );
+        uupsProxiableUUID = /^0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc$/i.test(uuidRaw || "");
+      } catch (_) {}
+    }
+
+    const selectorRoutedErc20Selectors = selectorRoutedImplementations
+      .filter(entry => entry.implementationHasCode === true)
+      .flatMap(entry => entry.implementationErc20Selectors);
+    const allErc20Selectors = [...new Set([
+      ...targetErc20Selectors,
+      ...implementationErc20Selectors,
+      ...selectorRoutedErc20Selectors
+    ])];
+
+    addFinding(
+      findings,
+      "Contract bytecode interface fingerprint",
+      allErc20Selectors.length >= 3
+        ? `Across the target contract and code-verified implementation bytecode, ${allErc20Selectors.length} common ERC-20 dispatch selectors were detected (${allErc20Selectors.join(", ")}). For selector-routed proxies, these may come from delegated implementation contracts rather than the target runtime itself. Selector presence is a heuristic and does not prove standard-compliant behavior.`
+        : `Across the target contract and code-verified implementation bytecode, only ${allErc20Selectors.length} common ERC-20 dispatch selector(s) were detected. No standard ERC-20 metadata was decoded; this may be a non-token contract, a custom dispatcher, or a proxy whose implementation needs separate inspection.`,
+      "neutral",
+      0
+    );
+
+    const proxyType = implementation
+      ? "eip1967"
+      : beacon
+        ? "eip1967_beacon"
+        : cloneImplementation
+          ? "eip1167_minimal_clone"
+          : selectorProxySalts.length
+            ? "custom_selector_routed"
+            : "not_detected";
+
+    if (implementation) {
+      addFinding(
+        findings,
+        "EIP-1967 proxy implementation",
+        "Live storage read identifies implementation " + implementation +
+          ". Proxy logic and implementation permissions must be reviewed separately.",
+        "warn",
+        8
+      );
+    }
+    if (admin) {
+      addFinding(
+        findings,
+        "EIP-1967 proxy administrator",
+        "Live storage read identifies proxy administrator " + admin +
+          ". This address may have upgrade control depending on the proxy implementation.",
+        "warn",
+        5
+      );
+    }
+    if (beacon) {
+      addFinding(
+        findings,
+        "EIP-1967 beacon",
+        "Live storage read identifies beacon contract " + beacon +
+          (beaconImplementation ? "; its implementation() call returned " + beaconImplementation : "; implementation() could not be resolved") +
+          ". The beacon's upgrade authority requires separate review.",
+        "warn",
+        5
+      );
+    }
+    if (cloneImplementation) {
+      addFinding(
+        findings,
+        "EIP-1167 minimal proxy",
+        "Runtime bytecode begins with the standard EIP-1167 minimal-clone delegatecall sequence and embeds fixed implementation " +
+          cloneImplementation + ". Trailing bytes may contain immutable clone data; this is a bytecode-pattern heuristic, and the implementation still requires review.",
+        "warn",
+        5
+      );
+    }
+    if (selectorProxySalts.length) {
+      const mapped = selectorRoutedImplementations.filter(entry => entry.implementation).length;
+      const verified = selectorRoutedImplementations.filter(entry => entry.implementationHasCode === true).length;
+      const missingCode = selectorRoutedImplementations.filter(entry => entry.implementationHasCode === false).length;
+      const deferredCodeChecks = selectorRoutedImplementations.filter(entry =>
+        entry.implementation && entry.implementationCodeCheckStatus === "deferred_subrequest_budget"
+      ).length;
+      const observedSelectorsChecked = Math.max(0,
+        selectorRoutedImplementations.length - Object.keys(ERC20_DISPATCH_SELECTORS).length
+      );
+      const observedSelectorsDeferred = Math.max(0,
+        (selectorHistory.selectors || []).length - observedSelectorsChecked
+      );
+      addFinding(
+        findings,
+        "Custom selector-routed proxy",
+        "Runtime bytecode contains a selector-keyed storage dispatcher pattern. Checked " +
+          selectorRoutedImplementations.length + " storage slots (" +
+          Object.keys(ERC20_DISPATCH_SELECTORS).length + " common ERC-20 selectors plus " +
+          observedSelectorsChecked + " of " + (selectorHistory.selectors || []).length +
+          " observed transaction selectors; " + observedSelectorsDeferred + " deferred to stay within the Worker subrequest budget): " +
+          mapped + " mapped selector(s), " + verified + " selector mapping(s) point to implementation code" +
+          (missingCode ? ", " + missingCode + " mapped selector(s) point to addresses without code" : "") +
+          (deferredCodeChecks ? ", " + deferredCodeChecks + " mapped selector(s) have deferred code checks" : "") +
+          ". Transaction-history discovery status: " + selectorHistory.status +
+          ". This is pattern-based detection; mappings and implementation behavior require manual review.",
+        missingCode ? "warn" : "neutral",
+        missingCode ? 8 : 0
+      );
+    }
+    if (resolvedImplementation && implementationHasCode === false) {
+      addFinding(
+        findings,
+        "Proxy implementation code missing",
+        "The resolved implementation address " + resolvedImplementation +
+          " returned no runtime bytecode. Proxy behavior may be broken or the implementation reference may be invalid.",
+        "warn",
+        12
+      );
+    }
+    if (uupsProxiableUUID === true) {
+      addFinding(
+        findings,
+        "UUPS upgrade interface",
+        "The resolved implementation returned the EIP-1967 implementation slot from proxiableUUID(), indicating a UUPS-compatible upgrade interface. Upgrade authorization must be reviewed.",
+        "warn",
+        8
+      );
+    }
+
+    return {
+      provider: "Direct chain RPC",
+      status: "success",
+      incomplete: false,
+      message: "Live bytecode, token-interface, proxy implementation and upgrade-interface checks completed where supported.",
+      bytecodeBytes,
+      bytecodeSha256: codeHash,
+      tokenMetadata: {
+        name: name || null,
+        symbol: symbol || null,
+        decimals: decimals,
+        totalSupplyRaw: totalSupply
+      },
+      owner: owner,
+      paused: paused,
+      proxy: {
+        type: proxyType,
+        implementation: resolvedImplementation,
+        eip1967Implementation: implementation,
+        cloneImplementation: cloneImplementation,
+        admin: admin,
+        beacon: beacon,
+        beaconImplementation: beaconImplementation,
+        implementationCodeBytes: implementationCodeBytes,
+        implementationHasCode: implementationHasCode,
+        uupsProxiableUUID: uupsProxiableUUID,
+        selectorRouted: selectorProxySalts.length > 0 ? {
+          storageSalt: selectorProxySalts[0],
+          detection: "bytecode_pattern_heuristic",
+          history: {
+            status: selectorHistory.status,
+            message: selectorHistory.message,
+            transactionCount: selectorHistory.transactionCount,
+            historySource: selectorHistory.historySource || null,
+            directTransactionCount: selectorHistory.directTransactionCount ?? null,
+            internalTransactionCount: selectorHistory.internalTransactionCount ?? null,
+            internalHistoryStatus: selectorHistory.internalHistoryStatus || null,
+            observedSelectors: selectorHistory.selectors || []
+          },
+          checkedSelectorCount: selectorRoutedImplementations.length,
+          mappedSelectorCount: selectorRoutedImplementations.filter(entry => entry.implementation).length,
+          selectorImplementations: selectorRoutedImplementations
+        } : null
+      },
+      interfaceFingerprint: {
+        erc20Selectors: allErc20Selectors,
+        targetSelectorCount: targetSelectors.length,
+        implementationSelectorCount: [...new Set([
+          ...implementationErc20Selectors,
+          ...selectorRoutedErc20Selectors
+        ])].length,
+        selectorRoutedImplementationCount: new Set(
+          selectorRoutedImplementations
+            .filter(entry => entry.implementationHasCode === true)
+            .map(entry => entry.implementation.toLowerCase())
+        ).size
+      }
+    };
+  } catch (error) {
+    addFinding(
+      findings,
+      "On-chain contract scan unavailable",
+      String(error?.message || "Direct chain RPC check failed").slice(0, 240),
+      "neutral",
+      0
+    );
+    return {
+      provider: "Direct chain RPC",
+      status: error?.status || "error",
+      incomplete: true,
+      httpStatus: error?.httpStatus || null,
+      message: String(error?.message || "Direct chain RPC check failed").slice(0, 240),
+      failureType: error?.failureType || null
+    };
+  }
+}
 
 async function readErc20Metadata(token, chainId, env) {
   const id = String(chainId);
@@ -1951,9 +3120,9 @@ async function handleScan(request, env) {
   const sources = [];
   const jobs = [];
 
-  const runGoPlus = async (key, url, onSuccess) => {
+  const runGoPlus = async (key, url, onSuccess, providerOptions = {}) => {
     try {
-      const result = await cachedProviderGet("goplus", url, env);
+      const result = await cachedProviderGet("goplus", url, env, providerOptions);
 
       providers[key] = providerStatus("GoPlus", result);
       sources.push(`GoPlus ${key}`);
@@ -1973,6 +3142,37 @@ async function handleScan(request, env) {
         parsedRecordCount: collectRecordObjects(data).length
       };
 
+      // HTTP 200 / code 1 only confirms the GoPlus API request succeeded.
+      // An empty token_security result contains no contract risk indicators
+      // and must never be scored as a successful security check.
+      if (
+        key === "token_security" &&
+        (
+          !data ||
+          typeof data !== "object" ||
+          Array.isArray(data) ||
+          Object.keys(data).length === 0 ||
+          !Object.values(data).some(
+            value => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0
+          )
+        )
+      ) {
+        providers[key] = {
+          ...providers[key],
+          status: "no_data",
+          incomplete: true,
+          message: "GoPlus returned a successful HTTP response but no token-security record for this contract."
+        };
+        addFinding(
+          findings,
+          "token_security data unavailable",
+          "GoPlus returned code 1 / OK, but its result contained no token-security record. No risk indicators can be scored from this response.",
+          "neutral",
+          0
+        );
+        return;
+      }
+
       await onSuccess(result.data);
 
     } catch (e) {
@@ -1980,8 +3180,14 @@ async function handleScan(request, env) {
         provider: "GoPlus",
         status: e.status || "error",
         httpStatus: e.httpStatus || null,
-        message: e.message || "Provider request failed",
-        cache: "none"
+        message: e.retryAfterSeconds
+          ? `${e.message || "Provider rate limited"} (retry after approximately ${e.retryAfterSeconds}s)`
+          : (e.message || "Provider request failed"),
+        retryAfterSeconds: e.retryAfterSeconds || null,
+        cooldownActive: e.cooldownActive === true,
+        requestSkipped: e.requestSkipped === true,
+        cooldownUntil: e.cooldownUntil || null,
+        cache: e.requestSkipped === true ? "cooldown" : "none"
       };
 
       addFinding(
@@ -2043,11 +3249,24 @@ async function handleScan(request, env) {
     }
 
   } else {
+    jobs.push((async () => {
+      providers.onchain_contract = await scanContractOnChain(
+        address,
+        chainId,
+        env,
+        findings
+      );
+      if (providers.onchain_contract.status === "success") {
+        sources.push("Direct chain RPC contract inspection");
+      }
+    })());
+
     jobs.push(
       runGoPlus(
         "token_security",
         `${GOPLUS_API}/api/v1/token_security/${chainId}?contract_addresses=${address.toLowerCase()}`,
-        data => summarizeTokenRisk(data, findings)
+        data => summarizeTokenRisk(data, findings),
+        { ttl: 300, rateLimitScope: "token_security" }
       )
     );
 
@@ -2192,7 +3411,9 @@ async function handleScan(request, env) {
     mode !== "contract" ||
     (
       providers.token_security?.status === "success" &&
-      providers.token_security?.incomplete !== true
+      providers.token_security?.incomplete !== true &&
+      providers.onchain_contract?.status === "success" &&
+      providers.onchain_contract?.incomplete !== true
     );
   const score = contractCoreCheckSuccessful
     ? scoreFindings(findings)
