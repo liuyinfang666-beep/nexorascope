@@ -15,6 +15,125 @@ const ETHERSCAN_API = "https://api.etherscan.io/v2/api";
 const GOPLUS_API = "https://api.gopluslabs.io";
 const PROVIDER_COOLDOWNS = new Map();
 const GOPLUS_DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
+let GOPLUS_ACCESS_TOKEN_CACHE = null;
+let GOPLUS_ACCESS_TOKEN_IN_FLIGHT = null;
+
+async function getGoPlusAuthorization(env) {
+  const appKey = env.GOPLUS_APP_KEY;
+  const appSecret = env.GOPLUS_APP_SECRET;
+
+  if (!appKey && !appSecret) {
+    return env.GOPLUS_TOKEN
+      ? `Bearer ${env.GOPLUS_TOKEN}`
+      : null;
+  }
+
+  if (!appKey || !appSecret) {
+    throw Object.assign(
+      new Error("Both GOPLUS_APP_KEY and GOPLUS_APP_SECRET must be configured"),
+      { status: "auth_error" }
+    );
+  }
+
+  if (
+    GOPLUS_ACCESS_TOKEN_CACHE &&
+    GOPLUS_ACCESS_TOKEN_CACHE.expiresAt > Date.now()
+  ) {
+    return `Bearer ${GOPLUS_ACCESS_TOKEN_CACHE.accessToken}`;
+  }
+
+  if (GOPLUS_ACCESS_TOKEN_IN_FLIGHT) {
+    const accessToken = await GOPLUS_ACCESS_TOKEN_IN_FLIGHT;
+    return `Bearer ${accessToken}`;
+  }
+
+  const tokenJob = (async () => {
+    const time = Math.floor(Date.now() / 1000);
+    const signInput = `${appKey}${time}${appSecret}`;
+    const digest = await crypto.subtle.digest(
+      "SHA-1",
+      new TextEncoder().encode(signInput)
+    );
+    const sign = Array.from(new Uint8Array(digest))
+      .map(byte => byte.toString(16).padStart(2, "0"))
+      .join("");
+
+    const startedAt = Date.now();
+    const response = await fetch(`${GOPLUS_API}/api/v1/token`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        app_key: appKey,
+        sign,
+        time
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (_) {
+      throw Object.assign(
+        new Error("GoPlus token endpoint returned invalid JSON"),
+        { status: "unavailable", httpStatus: response.status }
+      );
+    }
+
+    const providerCode = data?.code;
+    const providerMessage = data?.message || data?.msg || "";
+    const accessToken =
+      data?.result?.access_token || data?.access_token || "";
+    const codeText = String(providerCode ?? "");
+
+    if (!response.ok || codeText !== "1" || !accessToken) {
+      const status = codeText === "4029"
+        ? "rate_limited"
+        : ["4010", "4011", "4012", "4023"].includes(codeText)
+          ? "auth_error"
+          : classifyFailure(response.status, providerMessage);
+
+      console.warn("[goplus-auth] token_response", {
+        httpStatus: response.status,
+        providerCode: providerCode ?? null,
+        providerMessage: String(providerMessage).slice(0, 200),
+        durationMs: Date.now() - startedAt
+      });
+
+      throw Object.assign(
+        new Error(providerMessage || `GoPlus token request failed (code ${codeText || "unknown"})`),
+        { status, httpStatus: response.status }
+      );
+    }
+
+    const expiresIn = Number(data?.result?.expires_in ?? data?.expires_in ?? 3600);
+    const cacheMs = Math.max(1000, (expiresIn - 60) * 1000);
+    GOPLUS_ACCESS_TOKEN_CACHE = {
+      accessToken,
+      expiresAt: Date.now() + cacheMs
+    };
+
+    console.info("[goplus-auth] token_response", {
+      httpStatus: response.status,
+      providerCode: providerCode ?? null,
+      expiresInSeconds: Number.isFinite(expiresIn) ? expiresIn : null,
+      durationMs: Date.now() - startedAt
+    });
+
+    return accessToken;
+  })();
+
+  GOPLUS_ACCESS_TOKEN_IN_FLIGHT = tokenJob;
+  try {
+    const accessToken = await tokenJob;
+    return `Bearer ${accessToken}`;
+  } finally {
+    GOPLUS_ACCESS_TOKEN_IN_FLIGHT = null;
+  }
+}
 
 function retryAfterMilliseconds(response, fallbackMs = GOPLUS_DEFAULT_COOLDOWN_MS) {
   const value = response?.headers?.get("retry-after");
@@ -414,9 +533,11 @@ async function cachedProviderGet(
           ...headers
         };
 
-        if (provider === "goplus" && env.GOPLUS_TOKEN) {
-          requestHeaders.authorization =
-            `Bearer ${env.GOPLUS_TOKEN}`;
+        if (provider === "goplus") {
+          const authorization = await getGoPlusAuthorization(env);
+          if (authorization) {
+            requestHeaders.authorization = authorization;
+          }
         }
 
         if (provider === "goplus") {
