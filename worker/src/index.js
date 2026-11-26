@@ -14,7 +14,7 @@ const MAX_RETRIES = 1;
 const ETHERSCAN_API = "https://api.etherscan.io/v2/api";
 const GOPLUS_API = "https://api.gopluslabs.io";
 const PROVIDER_COOLDOWNS = new Map();
-const GOPLUS_DEFAULT_COOLDOWN_MS = 60 * 1000;
+const GOPLUS_DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
 
 function retryAfterMilliseconds(response, fallbackMs = GOPLUS_DEFAULT_COOLDOWN_MS) {
   const value = response?.headers?.get("retry-after");
