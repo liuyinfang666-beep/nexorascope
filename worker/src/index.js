@@ -518,10 +518,13 @@ async function cachedProviderGet(
         if (failureStatus === "rate_limited" && cooldownKey) {
           const cooldownMs = error?.retryAfterMs ||
             (error?.retryAfterSeconds ? error.retryAfterSeconds * 1000 : GOPLUS_DEFAULT_COOLDOWN_MS);
-          await setProviderCooldown(cooldownKey, cooldownMs, env);
+          const cooldownUntil = await setProviderCooldown(cooldownKey, cooldownMs, env);
           error.status = "rate_limited";
           error.retryAfterSeconds = error.retryAfterSeconds ||
             Math.ceil(cooldownMs / 1000);
+          error.cooldownActive = true;
+          error.requestSkipped = false;
+          error.cooldownUntil = cooldownUntil;
           throw error;
         }
 
