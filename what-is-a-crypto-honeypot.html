@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What Is a Crypto Honeypot? How to Identify Tokens You Cannot Sell | NexoraScope</title>
+<meta name="description" content="Learn what crypto honeypot tokens are, why buyers may be unable to sell, and how to investigate transfer restrictions, blacklists, taxes and contract permissions.">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<link rel="canonical" href="https://nexorascope.xyz/what-is-a-crypto-honeypot.html">
+<meta property="og:type" content="article"><meta property="og:site_name" content="NexoraScope"><meta property="og:title" content="What Is a Crypto Honeypot? How to Identify Tokens You Cannot Sell | NexoraScope"><meta property="og:description" content="Understand honeypot token mechanics, transfer restrictions, blacklists, trading fees and practical contract research steps."><meta property="og:url" content="https://nexorascope.xyz/what-is-a-crypto-honeypot.html">
+<meta name="twitter:card" content="summary"><meta name="twitter:title" content="What Is a Crypto Honeypot? | NexoraScope"><meta name="twitter:description" content="Learn how to investigate tokens that may let users buy but prevent or severely restrict selling.">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"What Is a Crypto Honeypot? How to Identify Tokens You Cannot Sell","description":"Learn what crypto honeypot tokens are, why buyers may be unable to sell, and how to investigate transfer restrictions, blacklists, taxes and contract permissions.","mainEntityOfPage":{"@type":"WebPage","@id":"https://nexorascope.xyz/what-is-a-crypto-honeypot.html"},"datePublished":"2026-11-27","dateModified":"2026-11-27","inLanguage":"en","author":{"@type":"Organization","name":"NexoraScope Editorial Team"},"publisher":{"@type":"Organization","name":"NexoraScope","url":"https://nexorascope.xyz/"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://nexorascope.xyz/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://nexorascope.xyz/blog.html"},{"@type":"ListItem","position":3,"name":"What Is a Crypto Honeypot?","item":"https://nexorascope.xyz/what-is-a-crypto-honeypot.html"}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"What is a crypto honeypot token?","acceptedAnswer":{"@type":"Answer","text":"A crypto honeypot is a token or trading setup designed so that users may be able to buy but cannot sell normally, or can sell only under highly restrictive conditions."}},{"@type":"Question","name":"Can a honeypot token allow some wallets to sell?","acceptedAnswer":{"@type":"Answer","text":"Yes. Some contracts may apply different rules to different addresses, such as allowlists or privileged wallets. A successful sell by one wallet does not prove that all holders can sell."}},{"@type":"Question","name":"Are high token taxes proof of a honeypot?","acceptedAnswer":{"@type":"Answer","text":"No. High or changeable fees can be a warning sign, but tax settings alone do not establish that a token is a honeypot. Review the deployed logic and current configuration."}},{"@type":"Question","name":"Can a crypto scanner detect every honeypot?","acceptedAnswer":{"@type":"Answer","text":"No. Automated checks depend on contract architecture, simulation assumptions, provider coverage and current state. They can miss risks or produce inconclusive results."}},{"@type":"Question","name":"What should I do if I cannot sell a token?","acceptedAnswer":{"@type":"Answer","text":"Do not keep paying unknown services or share your seed phrase. Verify the contract and network, inspect transaction reverts and fees, and seek independent technical help if needed."}}]}</script>
+<link rel="stylesheet" href="assets/site.css"></head><body>
+<header><div class="wrap nav"><a class="brand" href="index.html"><span class="brandMark">N</span>NEXORA<span>SCOPE</span></a><nav><a href="scanner.html">Live Scanner</a><a href="blog.html">Blog</a><a href="wallet-security.html">Wallet Guide</a><a href="token-approval.html">Token Approvals</a><a href="crypto-scams.html">Scam Prevention</a></nav><a class="btn" href="scanner.html">Scan a contract</a></div></header>
+<main id="main-content"><div class="wrap breadcrumb"><a href="index.html">Home</a> · <a href="blog.html">Blog</a> · Crypto Honeypots</div>
+<section class="content-hero"><div class="wrap"><div class="eyebrow">TOKEN RISK · SMART CONTRACT SECURITY</div><h1>What Is a Crypto Honeypot? How to Identify Tokens You Cannot Sell</h1><p class="lead">Learn how some token contracts can allow purchases while restricting sells, and how to investigate transfer rules, privileged wallets, fees and trading controls before interacting.</p><p class="fine">NexoraScope Editorial Team · Published November 27, 2026 · 8–10 min read</p></div></section>
+<section><div class="wrap prose">
+<nav aria-label="On this page"><p><strong>In this guide:</strong> <a href="#meaning">What is a honeypot?</a> · <a href="#mechanics">How restrictions work</a> · <a href="#signs">Warning signs</a> · <a href="#checks">How to investigate</a> · <a href="#scanner">Use a scanner</a> · <a href="#faq">FAQ</a></p></nav>
+<p>Imagine buying a newly launched token and later discovering that your wallet cannot sell it. The token may appear in your wallet, and a purchase may have succeeded, but sell transactions repeatedly fail or encounter unexpected restrictions. This pattern is commonly described as a <strong>crypto honeypot</strong>.</p>
+<p>The term is often used loosely online. A failed swap does not automatically prove malicious intent: low liquidity, slippage settings, network congestion, router issues, trading launch rules or an incorrect token address can also prevent a sale. The goal is to identify the actual reason using transaction evidence and contract behavior—not to label a token based on a single failed transaction.</p>
+<h2 id="meaning">1. What is a crypto honeypot?</h2>
+<p>A honeypot token is generally a token or trading arrangement in which buyers can acquire tokens but ordinary holders cannot sell them normally, or can sell only under conditions controlled by the token's creators. The restriction may be built into the token contract, related contracts, or trading configuration.</p>
+<p>Some designs are overtly restrictive; others may initially appear tradable and later change behavior through privileged settings or an upgradeable contract. In some cases, only selected wallets are allowed to sell. That can make early activity look healthy while ordinary buyers remain unable to exit.</p>
+<p>Not every token with transfer controls is a honeypot. Projects may use launch protections, anti-bot limits or compliance controls. These mechanisms still deserve scrutiny because their scope, duration and administrator powers affect holders.</p>
+<h2 id="mechanics">2. How can a token allow buying but block selling?</h2>
+<p>Token contracts can contain logic that treats transfers differently depending on the sender, recipient, transaction context or current settings. Potential mechanisms include:</p>
+<ul>
+<li><strong>Blacklists or blocked-address mappings:</strong> selected wallets may be prevented from transferring or selling.</li>
+<li><strong>Allowlist-only transfers:</strong> only approved addresses or trading pairs may transfer under certain conditions.</li>
+<li><strong>Trading activation controls:</strong> transfers may be restricted until an administrator enables trading, or settings may later be changed.</li>
+<li><strong>Transaction or wallet limits:</strong> maximum sell amounts, cooldowns, or per-wallet limits can prevent a particular transaction from succeeding.</li>
+<li><strong>Configurable transfer fees:</strong> an authorized account may be able to raise fees, potentially making selling uneconomic or impossible under the contract's rules.</li>
+<li><strong>Selective pair or router checks:</strong> contract logic may treat transfers involving a decentralized-exchange pair differently from ordinary wallet transfers.</li>
+<li><strong>Upgradeable logic:</strong> a proxy administrator may be able to replace implementation logic, depending on the contract architecture.</li>
+</ul>
+<p>These are examples of mechanisms to investigate, not proof that any particular token uses them maliciously. The exact effect depends on the deployed code, current storage values, privileged roles and external contracts.</p>
+<h2 id="signs">3. Warning signs worth investigating</h2>
+<ul>
+<li>Multiple independent wallets report that sell transactions revert while buys succeed.</li>
+<li>Verified source code contains transfer restrictions, blacklist logic or highly privileged fee controls that are not clearly disclosed.</li>
+<li>An owner or role can change sell fees, block addresses, alter trading settings or grant additional permissions without meaningful safeguards.</li>
+<li>Only a small set of wallets appear able to sell, while ordinary holders cannot.</li>
+<li>Sell simulations fail consistently across reputable tools, and the failure is attributable to token logic rather than liquidity, slippage or routing.</li>
+<li>The contract is unverified or its important behavior depends on external contracts that are difficult to inspect.</li>
+</ul>
+<p>One signal is rarely conclusive. For example, an unverified contract increases uncertainty but does not by itself prove a honeypot. A high fee may be disclosed and temporary, or it may be changeable by an administrator. Investigate the full context.</p>
+<h2>4. Rule out ordinary swap failures first</h2>
+<p>Before concluding that a token blocks selling, check other common causes:</p>
+<ul>
+<li><strong>Liquidity:</strong> confirm that the relevant trading pool has sufficient liquidity and that the pool is the correct one.</li>
+<li><strong>Slippage and price impact:</strong> an overly tight slippage setting or a very large trade relative to liquidity can cause a swap to fail.</li>
+<li><strong>Network conditions:</strong> congestion, insufficient gas, stale quotes or RPC problems can prevent execution.</li>
+<li><strong>Router and pair:</strong> confirm that the interface is using a supported router and the intended pool.</li>
+<li><strong>Launch restrictions:</strong> check whether a documented launch period, cooldown or maximum transaction rule is active.</li>
+<li><strong>Token address and network:</strong> verify the exact contract address and blockchain. A fake token with a familiar name may have completely different behavior.</li>
+</ul>
+<p>Read the failed transaction's revert reason or execution trace when available. The message may be generic, but the trace can help distinguish a token-level restriction from a router, liquidity or network problem.</p>
+<h2 id="checks">5. How to investigate a token before buying</h2>
+<ol>
+<li><strong>Verify the contract address.</strong> Obtain it from the project's independently verified website or documentation. Check the chain and compare the complete address.</li>
+<li><strong>Open the relevant block explorer.</strong> Use <a href="https://etherscan.io/" target="_blank" rel="noopener noreferrer">Etherscan</a> for Ethereum, <a href="https://bscscan.com/" target="_blank" rel="noopener noreferrer">BscScan</a> for BNB Chain, or <a href="https://basescan.org/" target="_blank" rel="noopener noreferrer">BaseScan</a> for Base.</li>
+<li><strong>Inspect verified source code.</strong> Look for transfer hooks and conditions, blacklist or whitelist checks, trading flags, fee calculations, max transaction limits and external calls. Function names alone are not enough; follow the actual execution path.</li>
+<li><strong>Identify privileged roles.</strong> Determine who can pause transfers, change fees, block addresses, enable trading, update limits, grant roles or upgrade the contract. Check whether control is held by a single key, multisig, timelock or governance system.</li>
+<li><strong>Review current settings and events.</strong> Where possible, inspect on-chain state and relevant events to see whether fees, restrictions or permissions have changed. Historical behavior does not guarantee future behavior.</li>
+<li><strong>Check sell simulation carefully.</strong> A simulation can be useful, but confirm the tool's assumptions, amount, route, wallet context and block state. A successful test for one wallet or amount does not prove every holder can sell.</li>
+<li><strong>Compare with project disclosures.</strong> Check whether anti-bot rules, fees, trading restrictions and administrator powers are clearly documented and consistent with the deployed contract.</li>
+</ol>
+<p>For a broader contract-review process, read <a href="how-to-check-crypto-token-before-buy.html">How to Check a Crypto Token Before You Buy</a>. If the contract includes supply controls, our guide to <a href="what-is-token-minting-function.html">token minting functions</a> explains another important permission area.</p>
+<h2 id="scanner">6. Use NexoraScope as one part of your research</h2>
+<p>The <a href="scanner.html">NexoraScope multi-chain scanner</a> supports public contract research on Ethereum, BNB Chain and Base. It presents available third-party security indicators and contract information that can help identify questions to investigate, including permission-related or transfer-related signals where supported by the available data.</p>
+<p>To use it, select the correct network, choose contract scan and enter the public token contract address. Review the details and provider status. Follow up on important findings using the relevant block explorer, verified source code and project documentation.</p>
+<div class="notice"><strong>Important limitation:</strong> NexoraScope is not a dedicated guarantee against honeypots and cannot detect every malicious or restrictive design. Provider data may be incomplete, unavailable, rate-limited or unable to interpret a particular contract architecture. A missing warning does not prove that a token can be sold. Scanner results are informational and are not a professional audit.</div>
+<h2>7. What if you already bought a token and cannot sell?</h2>
+<ul>
+<li>Stop making repeated transactions until you understand the failure; repeated attempts may consume additional gas.</li>
+<li>Save the transaction hashes and inspect the revert details on the correct block explorer.</li>
+<li>Verify the token contract, network, trading pair, liquidity and router independently.</li>
+<li>Do not share your seed phrase or private key with anyone claiming they can unlock or recover the tokens.</li>
+<li>Be wary of recovery agents who demand an upfront payment, remote access or a wallet signature.</li>
+<li>If the contract appears to block transfers, consider getting an independent smart-contract specialist to review the deployed code and transaction trace.</li>
+</ul>
+<p>There may be no technical way to force a transfer if the contract's rules prevent it. Do not trust anyone promising guaranteed recovery.</p>
+<h2 id="faq">Frequently asked questions</h2>
+<h3>What is a crypto honeypot token?</h3><p>A crypto honeypot is a token or trading setup designed so that users may be able to buy but cannot sell normally, or can sell only under highly restrictive conditions.</p>
+<h3>Can a honeypot token allow some wallets to sell?</h3><p>Yes. Some contracts may apply different rules to different addresses, such as allowlists or privileged wallets. A successful sell by one wallet does not prove that all holders can sell.</p>
+<h3>Are high token taxes proof of a honeypot?</h3><p>No. High or changeable fees can be a warning sign, but tax settings alone do not establish that a token is a honeypot. Review the deployed logic and current configuration.</p>
+<h3>Can a crypto scanner detect every honeypot?</h3><p>No. Automated checks depend on contract architecture, simulation assumptions, provider coverage and current state. They can miss risks or produce inconclusive results.</p>
+<h3>What should I do if I cannot sell a token?</h3><p>Do not keep paying unknown services or share your seed phrase. Verify the contract and network, inspect transaction reverts and fees, and seek independent technical help if needed.</p>
+<h2>Key takeaways</h2>
+<ul><li>A honeypot generally lets buyers enter while preventing or severely restricting ordinary selling.</li><li>Blacklist logic, allowlists, configurable fees, trading controls and upgradeability are areas to investigate—not automatic proof of fraud.</li><li>Rule out liquidity, slippage, router and network problems before drawing conclusions from a failed swap.</li><li>Inspect source code, current on-chain settings and every privileged role.</li><li>Simulation and scanner results can be useful, but neither can guarantee that all holders will be able to sell.</li></ul>
+<p><strong>Research Before You Trade.</strong> Start with the <a href="scanner.html">NexoraScope scanner</a>, then verify important details independently.</p>
+<div class="notice"><strong>Disclaimer:</strong> This article is for educational and informational purposes only. It is not investment advice, a professional smart-contract audit, or a guarantee of token safety. Automated data may be incomplete or inaccurate. Always conduct independent research before making financial decisions.</div>
+<h2>Technical references</h2>
+<ul><li><a href="https://docs.openzeppelin.com/contracts/5.x/api/token/erc20" target="_blank" rel="noopener noreferrer">OpenZeppelin Contracts: ERC-20 API</a></li><li><a href="https://docs.openzeppelin.com/contracts/5.x/access-control" target="_blank" rel="noopener noreferrer">OpenZeppelin Contracts: Access Control</a></li><li><a href="https://ethereum.org/en/developers/docs/smart-contracts/" target="_blank" rel="noopener noreferrer">Ethereum.org: Smart Contracts</a></li><li><a href="https://eips.ethereum.org/EIPS/eip-1967" target="_blank" rel="noopener noreferrer">Ethereum Improvement Proposal 1967: Proxy Storage Slots</a></li></ul>
+<p>Related reading: <a href="how-to-check-crypto-token-before-buy.html">How to Check a Crypto Token Before You Buy</a> · <a href="what-is-token-minting-function.html">What Is a Token Minting Function?</a> · <a href="crypto-scams.html">Crypto Scam Prevention</a>.</p>
+<p class="fine">Last reviewed: November 27, 2026. Suggest a correction: <a href="mailto:NexoraScopesupport@gmail.com">NexoraScope support</a>.</p>
+</div></section></main>
+<footer><div class="wrap"><strong>NEXORASCOPE · RESEARCH BEFORE YOU TRADE</strong><p>General educational information only. Not personalized investment, legal or tax advice. Scanner results depend on third-party provider coverage and are not an audit or guarantee of safety.</p><p><a href="index.html">Home</a> · <a href="scanner.html">Live Scanner</a> · <a href="blog.html">Blog</a> · <a href="about.html">About</a> · <a href="wallet-security.html">Wallet Security</a> · <a href="token-approval.html">Token Approvals</a> · <a href="crypto-scams.html">Scam Prevention</a> · <a href="privacy.html">Privacy</a> · <a href="contact.html">Contact</a></p><p>Never share passwords, private keys or recovery phrases. © 2026 NexoraScope.</p></div></footer></body></html>
